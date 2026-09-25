@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup-ul automat Google (Android 11 și mai vechi). Licența nu se copiază
+  prin Google: codul de instalare și licența se mută pe alt telefon doar prin
+  backup-ul Inventar+ sau prin transferul SMS către telefonul partener.
+  Restul exclus: stare locală a acestui telefon (folder de backup, cozi SMS,
+  copia de siguranță dinaintea unei restaurări).
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="LicensePrefs.xml" />
+    <exclude domain="sharedpref" path="BackupPrefs.xml" />
+    <exclude domain="sharedpref" path="SyncQueue.xml" />
+    <exclude domain="file" path="before_restore.invbackup" />
+</full-backup-content>

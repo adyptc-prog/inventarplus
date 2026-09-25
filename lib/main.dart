@@ -7,9 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'backup_screen.dart';
+import 'backup_service.dart';
+import 'license_screen.dart';
+import 'license_service.dart';
 
 // ─── Constante ───────────────────────────────────────────────────────────────
 const _kItemsKey         = 'inventar_products';
@@ -123,16 +129,69 @@ class AlertService {
       .replaceAll('[PRAG_ALERTA]', p.pragAlerta.toString());
 }
 
-// ─── Serviciu SMS/cameră: cerere permisiuni ───────────────────────────────────
+// Testele rulează pe desktop — permite simularea Android-ului pentru
+// permisiuni și sincronizare (canalele native sunt simulate în teste).
+@visibleForTesting
+bool? debugSimulateAndroid;
+bool get _isAndroid => debugSimulateAndroid ?? Platform.isAndroid;
+
+// ─── Serviciu SMS: permisiune și eșecuri de trimitere ─────────────────────────
 class SmsService {
   static const _ch = MethodChannel('inventarplus/sms');
 
-  static Future<void> requestPermission() async {
-    try { await Permission.sms.request(); } catch (_) {}
-    if (Platform.isAndroid) {
-      try { await _ch.invokeMethod<void>('requestReceiveSms'); } catch (_) {}
+  static bool get isAndroid => _isAndroid;
+
+  // Permission.sms cere împreună SEND_SMS și RECEIVE_SMS (alerte +
+  // sincronizare prin SMS).
+  static Future<bool> requestPermission() async {
+    if (!isAndroid) return true;
+    try {
+      return (await Permission.sms.request()).isGranted;
+    } catch (_) {
+      return false;
     }
   }
+
+  // Fără permisiune, toate SMS-urile (alerte, sincronizare, licență) eșuează
+  // silențios în partea nativă — interfața trebuie să știe.
+  static Future<bool> hasPermission() async {
+    if (!isAndroid) return true;
+    try {
+      return (await Permission.sms.status).isGranted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Ultimul SMS care nu a putut fi trimis (raportul sistemului), neînchis
+  // încă de utilizator — sau null.
+  static Future<({DateTime failedAt, String phone, String reason})?>
+      pendingFailure() async {
+    if (!isAndroid) return null;
+    try {
+      final r = await _ch.invokeMethod<Map<Object?, Object?>>('getSmsFailure');
+      if (r == null) return null;
+      return (
+        failedAt: DateTime.fromMillisecondsSinceEpoch((r['failedAt'] as int?) ?? 0),
+        phone: (r['phone'] as String?) ?? '',
+        reason: (r['reason'] as String?) ?? '',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> dismissFailure() async {
+    if (!isAndroid) return;
+    try { await _ch.invokeMethod<void>('dismissSmsFailure'); } catch (_) {}
+  }
+
+  static String fmt(DateTime dt) =>
+      '${dt.day.toString().padLeft(2, '0')}.'
+      '${dt.month.toString().padLeft(2, '0')}.'
+      '${dt.year} '
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}';
 }
 
 // ─── Serviciu sincronizare bidirecțională prin SMS ────────────────────────────
@@ -143,6 +202,8 @@ class SmsService {
 //   INV:D:{syncId} — produs șters
 //   INV:I:{json}  — produs din sincronizare inițială (bulk)
 //   INV:Z:        — sfârșitul sincronizării inițiale
+//   INV:L:{json}  — licența semnată (tratat nativ, în SmsSyncReceiver)
+//   INV:R:        — cerere de licență (tratat nativ, în SmsSyncReceiver)
 //
 // Câmpuri JSON compact: s=syncId, n=denumire, d=descriere, b=codBare,
 //   q=stocActual, m=stocMinim, a=pragAlerta, c=createdAt, l=lastAlertLevel,
@@ -151,7 +212,7 @@ class SyncService {
   static const _ch = MethodChannel('inventarplus/sms');
   static String? _partnerPhone;
 
-  static bool get isSupported => Platform.isAndroid;
+  static bool get isSupported => _isAndroid;
   static bool get isActive =>
       _partnerPhone != null && _partnerPhone!.isNotEmpty;
   static String? get partnerPhone => _partnerPhone;
@@ -201,6 +262,26 @@ class SyncService {
   static Future<void> sendDelete(String syncId) =>
       _send('INV:D:$syncId');
 
+  // Licența cumpărată merge pe ambele telefoane sincronizate. La împerechere,
+  // telefonul cu licență o trimite („L”), iar cel fără licență o cere („R”) —
+  // partenerul poate să-l fi configurat deja pe acesta înainte, caz în care
+  // licența trimisă atunci a fost ignorată. Mesajele sunt tratate nativ, în
+  // SmsSyncReceiver, doar dacă vin de la partenerul configurat.
+  static Future<void> sendLicenseHandshake() async {
+    final license = await LicenseService.getShareableLicense();
+    await _send(license != null ? 'INV:L:$license' : 'INV:R:');
+  }
+
+  // Trimite licența activă partenerului. Întoarce numărul de telefoane
+  // cărora le-a fost trimisă (0 sau 1).
+  static Future<int> sendLicenseToPartner() async {
+    if (!isSupported || !isActive) return 0;
+    final license = await LicenseService.getShareableLicense();
+    if (license == null) return 0;
+    await _send('INV:L:$license');
+    return 1;
+  }
+
   static Future<List<String>> getPendingMessages() async {
     if (!isSupported) return [];
     try {
@@ -218,132 +299,6 @@ class SyncService {
     try {
       await _ch.invokeMethod<void>('clearSyncQueue');
     } catch (_) {}
-  }
-}
-
-// ─── Serviciu licențiere ──────────────────────────────────────────────────────
-class LicenseService {
-  static const _ch              = MethodChannel('inventarplus/license');
-  static const _kTrialStartKey  = 'trial_start_date';
-  static const _trialDays       = 30;
-
-  static bool      _licensed   = false;
-  static DateTime? _trialStart;
-
-  // Fluxul nou: licență cu businessId + expirare, cumpărată de pe site
-  // (identic ca format cu Fidelio). Rulează alături de vechiul flux .invtoken,
-  // fără să-l înlocuiască — orice cod vechi deja emis rămâne valabil.
-  static String  newLicenseStatus = 'missing';
-  static String  newLicenseMessage = '';
-  static String? newLicenseValidUntil;
-  static int?    newLicenseDaysUntilExpiry;
-  static bool    newLicenseIsLifetime = false;
-
-  static bool get isLicensed => _licensed;
-
-  static bool get isTrialActive {
-    if (_trialStart == null) return false;
-    return DateTime.now().isBefore(_trialStart!.add(const Duration(days: _trialDays)));
-  }
-
-  static int get trialDaysLeft {
-    if (_trialStart == null) return 0;
-    final expiry = _trialStart!.add(const Duration(days: _trialDays));
-    final left   = expiry.difference(DateTime.now()).inDays;
-    return left < 0 ? 0 : left;
-  }
-
-  // Non-Android: nelimitat
-  static bool get canAdd => !Platform.isAndroid || _licensed || isTrialActive;
-
-  static Future<void> load() async {
-    if (!Platform.isAndroid) { _licensed = true; return; }
-    try {
-      _licensed = await _ch.invokeMethod<bool>('isLicensed') ?? false;
-    } catch (_) {}
-    await checkNewLicense();
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_kTrialStartKey);
-    if (saved == null) {
-      _trialStart = DateTime.now();
-      await prefs.setString(_kTrialStartKey, _trialStart!.toIso8601String());
-    } else {
-      _trialStart = DateTime.tryParse(saved);
-    }
-  }
-
-  static Future<String?> getPendingToken() async {
-    if (!Platform.isAndroid) return null;
-    try {
-      return await _ch.invokeMethod<String?>('getPendingToken');
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // Copia fișierului .invtoken folosit la activare, dacă există (vezi
-  // MainActivity.verifyAndActivate). Permite utilizatorului să-și retrimită
-  // singur licența dacă schimbă telefonul, fără să mai contacteze suportul.
-  static Future<String?> getBackupToken() async {
-    if (!Platform.isAndroid) return null;
-    try {
-      return await _ch.invokeMethod<String?>('getLicenseBackup');
-    } catch (_) {
-      return null;
-    }
-  }
-
-  static Future<void> checkNewLicense() async {
-    if (!Platform.isAndroid) return;
-    try {
-      final r = await _ch.invokeMethod<Map<Object?, Object?>>('checkLicense');
-      newLicenseStatus = (r?['status'] as String?) ?? 'missing';
-      newLicenseMessage = (r?['message'] as String?) ?? '';
-      newLicenseValidUntil = r?['validUntil'] as String?;
-      newLicenseDaysUntilExpiry = r?['daysUntilExpiry'] as int?;
-      newLicenseIsLifetime = (r?['isLifetime'] as bool?) ?? false;
-      if (newLicenseStatus == 'active') {
-        _licensed = true;
-      }
-    } catch (_) {}
-  }
-
-  static Future<String> getBusinessId() async {
-    if (!Platform.isAndroid) return '';
-    try {
-      return await _ch.invokeMethod<String>('getBusinessId') ?? '';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  // Deschide selectorul nativ de fișiere, reverifică licența, și întoarce
-  // true dacă fișierul ales e o licență validă și activă.
-  static Future<bool> pickLicenseFile() async {
-    if (!Platform.isAndroid) return false;
-    try {
-      await _ch.invokeMethod('pickLicenseFile');
-      await checkNewLicense();
-      return newLicenseStatus == 'active';
-    } catch (_) {
-      return false;
-    }
-  }
-
-  static Future<({bool success, String message})> activate(String token) async {
-    if (!Platform.isAndroid) {
-      return (success: false, message: 'Nu este suportat pe această platformă.');
-    }
-    try {
-      final r = await _ch.invokeMethod<Map<Object?, Object?>>('verifyAndActivate',
-          {'token': token});
-      final success = (r?['success'] as bool?) ?? false;
-      final msg     = (r?['msg']     as String?) ?? '';
-      if (success) _licensed = true;
-      return (success: success, message: msg);
-    } catch (e) {
-      return (success: false, message: e.toString());
-    }
   }
 }
 
@@ -618,9 +573,129 @@ class _InventarPageState extends State<InventarPage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadData();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      AlertService.requestPermissions();
-      SmsService.requestPermission();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _requestPermissions());
+    _loadAppVersion();
+    _startSyncQueueTimer();
+  }
+
+  // Versiunea instalată, afișată sub tabel — utilizatorul o compară cu cea de
+  // pe site ca să știe dacă are o actualizare disponibilă.
+  String _appVersion = '';
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _appVersion = info.version);
+    } catch (_) {}
+  }
+
+  // Android afișează o singură cerere de permisiuni odată — o a doua, lansată
+  // în paralel, e întoarsă imediat ca refuzată, fără dialog. De aceea
+  // cererile se fac strict una după alta.
+  Future<void> _requestPermissions() async {
+    await SmsService.requestPermission();
+    await AlertService.requestPermissions();
+    await _checkSmsPermission();
+    await _checkSmsFailure();
+  }
+
+  // ── Permisiunea SMS ──────────────────────────────────────────────────────────
+  bool _smsBlocked = false;
+
+  Future<void> _checkSmsPermission() async {
+    final ok = await SmsService.hasPermission();
+    if (mounted && _smsBlocked == ok) setState(() => _smsBlocked = !ok);
+  }
+
+  // Eșecurile de trimitere raportate de sistem (fără credit, fără semnal,
+  // SIM implicit nesetat...) — afișate până le închide utilizatorul.
+  ({DateTime failedAt, String phone, String reason})? _smsFailure;
+
+  Future<void> _checkSmsFailure() async {
+    final f = await SmsService.pendingFailure();
+    if (!mounted || f?.failedAt == _smsFailure?.failedAt) return;
+    setState(() => _smsFailure = f);
+  }
+
+  Future<void> _dismissSmsFailure() async {
+    await SmsService.dismissFailure();
+    if (mounted) setState(() => _smsFailure = null);
+  }
+
+  // Înainte de o acțiune care trimite SMS acum (sincronizare, licență): fără
+  // permisiune ar „reuși” în interfață, dar nimic nu ar pleca.
+  Future<bool> _ensureSmsPermission() async {
+    if (await SmsService.hasPermission()) return true;
+    final granted = await SmsService.requestPermission();
+    await _checkSmsPermission();
+    if (granted) return true;
+    if (mounted) await _showSmsBlockedDialog();
+    return false;
+  }
+
+  // Pe telefoanele cu Android 13+, o aplicație instalată din fișier APK nu
+  // poate primi permisiunea SMS până când utilizatorul nu permite „setările
+  // restricționate” din pagina aplicației — cererea e refuzată automat, fără
+  // dialog. Explicăm pașii și ducem utilizatorul direct acolo.
+  Future<void> _showSmsBlockedDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.sms_failed_outlined, color: Colors.red),
+          SizedBox(width: 8),
+          Expanded(child: Text('SMS-urile sunt blocate')),
+        ]),
+        content: const SingleChildScrollView(
+          child: Text(
+            'Fără permisiunea SMS nu pleacă alertele de stoc, sincronizarea '
+            'și licența către telefonul partener.\n\n'
+            'Dacă telefonul spune că setarea e restricționată „pentru '
+            'siguranța ta”:\n'
+            '1. Apasă „Deschide setările”.\n'
+            '2. Apasă ⋮ (dreapta-sus) → „Permite setările restricționate” '
+            'și confirmă.\n'
+            '3. Permisiuni → SMS → Permite.\n'
+            '4. Revino în aplicație.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Închide'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final ok = await SmsService.requestPermission();
+              await _checkSmsPermission();
+              if (ok && ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Cere permisiunea'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await openAppSettings();
+            },
+            child: const Text('Deschide setările'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Coada de sincronizare (și licența primită de la partener, eșecurile SMS)
+  // se verifica doar la pornire și la revenirea din fundal. Dacă aplicația
+  // stă deschisă în prim-plan, acel eveniment nu se declanșează — de-aici
+  // acest timer, care verifică periodic.
+  Timer? _syncQueueTimer;
+
+  void _startSyncQueueTimer() {
+    _syncQueueTimer?.cancel();
+    _syncQueueTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _processSyncQueue();
+      _checkLicenseFromPartner();
+      _checkSmsFailure();
     });
   }
 
@@ -630,20 +705,34 @@ class _InventarPageState extends State<InventarPage>
     await _loadItems();
     await _processSyncQueue();
     await _checkPendingLicense();
+    await _checkLicenseFromPartner();
+    await _warnLicenseExpiry();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _processSyncQueue();
-      _checkPendingLicense();
-      if (mounted) setState(() {});
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _startSyncQueueTimer();
+        _processSyncQueue();
+        _checkPendingLicense();
+        _refreshLicense();
+        _checkSmsPermission();
+        _checkSmsFailure();
+        if (mounted) setState(() {});
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        _syncQueueTimer?.cancel();
+        _syncQueueTimer = null;
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _syncQueueTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -853,6 +942,97 @@ class _InventarPageState extends State<InventarPage>
     if (r.success) setState(() {});
   }
 
+  Future<void> _openBackupScreen() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => BackupScreen(
+        onBeforeRestore: _pauseSyncForRestore,
+        onRestored: _reloadAfterRestore,
+      ),
+    ));
+    if (mounted) setState(() {});
+  }
+
+  // Coada de sincronizare scrie în SharedPreferences din fundal — oprită pe
+  // durata restaurării, ca să nu suprascrie datele abia restaurate cu cele
+  // vechi din cache-ul Dart.
+  Future<void> _pauseSyncForRestore() async {
+    _syncQueueTimer?.cancel();
+    _syncQueueTimer = null;
+  }
+
+  // Restaurarea înlocuiește datele nativ — cache-ul SharedPreferences din Dart
+  // și toată starea din memorie se reîncarcă de la zero (și la eșec: o
+  // restaurare întreruptă poate să fi scris parțial).
+  Future<void> _reloadAfterRestore(bool success) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _items.clear();
+        _deletedBuffer.clear();
+      });
+    }
+    await _loadData();
+    _startSyncQueueTimer();
+  }
+
+  Future<void> _openLicenseScreen() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => LicenseScreen(
+        onShareWithPartners: _shareLicenseWithPartners,
+      ),
+    ));
+    if (mounted) setState(() {});
+  }
+
+  // Negativ = SMS blocat (utilizatorul a văzut deja explicația).
+  Future<int> _shareLicenseWithPartners() async {
+    // Fără partener nu e nimic de trimis — nici motiv să cerem permisiunea.
+    if (!SyncService.isActive) return 0;
+    if (!await _ensureSmsPermission()) return -1;
+    return SyncService.sendLicenseToPartner();
+  }
+
+  Future<void> _refreshLicense() async {
+    await LicenseService.checkNewLicense();
+    if (mounted) setState(() {});
+  }
+
+  // Licența poate sosi prin SMS de la telefonul partener oricând — inclusiv
+  // cu aplicația închisă; o anunțăm la următoarea verificare.
+  Future<void> _checkLicenseFromPartner() async {
+    if (!await LicenseService.consumePartnerNotice()) return;
+    await LicenseService.checkNewLicense();
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Licența a fost primită de la telefonul partener.'),
+        backgroundColor: Colors.green.shade700,
+      ),
+    );
+  }
+
+  Future<void> _warnLicenseExpiry() async {
+    if (!await LicenseService.shouldWarnExpiryToday() || !mounted) return;
+    final days = LicenseService.newLicenseDaysUntilExpiry ?? 0;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(days <= 1
+            ? 'Licența expiră mâine! Reînnoiește-o pentru a evita întreruperile.'
+            : 'Licența expiră în $days zile. Reînnoiește-o pentru a evita întreruperile.'),
+        backgroundColor: Colors.orange.shade800,
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+          label: 'Detalii',
+          textColor: Colors.white,
+          onPressed: _openLicenseScreen,
+        ),
+      ),
+    );
+  }
+
   void _showLicenseRequiredDialog() async {
     final businessId = await LicenseService.getBusinessId();
     if (!mounted) return;
@@ -913,23 +1093,24 @@ class _InventarPageState extends State<InventarPage>
               const SizedBox(height: 12),
               FilledButton.icon(
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Select License File'),
+                label: const Text('Selectează fișierul de licență'),
                 onPressed: () async {
-                  final ok = await LicenseService.pickLicenseFile();
+                  final r = await LicenseService.pickLicenseFile();
                   if (!ctx.mounted) return;
+                  // Selectorul închis fără alegere — nimic de raportat.
+                  if (!r.success && r.message.isEmpty) return;
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     SnackBar(
-                      content: Text(ok
+                      content: Text(r.success
                           ? 'Licență activată cu succes!'
-                          : (LicenseService.newLicenseMessage.isNotEmpty
-                              ? LicenseService.newLicenseMessage
-                              : 'Fișierul selectat nu este o licență validă.')),
-                      backgroundColor: ok ? Colors.green.shade700 : Colors.red.shade700,
+                          : r.message),
+                      backgroundColor: r.success ? Colors.green.shade700 : Colors.red.shade700,
                     ),
                   );
-                  if (ok) {
+                  if (r.success) {
                     Navigator.pop(ctx);
                     if (mounted) setState(() {});
+                    unawaited(_shareLicenseWithPartners());
                   }
                 },
               ),
@@ -1577,6 +1758,7 @@ class _InventarPageState extends State<InventarPage>
                 onPressed: () async {
                   final phone = phoneCtrl.text.trim();
                   if (phone.isEmpty) return;
+                  if (!await _ensureSmsPermission()) return;
                   await SyncService.setPartner(phone);
                   setDs(() {});
                   if (ctx.mounted) Navigator.pop(ctx);
@@ -1599,6 +1781,7 @@ class _InventarPageState extends State<InventarPage>
         duration: Duration(seconds: _items.length * 2 + 3),
       ),
     );
+    await SyncService.sendLicenseHandshake();
     await SyncService.sendInitialSync(_items);
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -1737,25 +1920,29 @@ class _InventarPageState extends State<InventarPage>
           if (Platform.isAndroid)
             IconButton(
               icon: Icon(
-                LicenseService.isLicensed
+                LicenseService.isExpiringSoon
+                    ? Icons.warning_amber_rounded
+                    : LicenseService.isLicensed
                     ? Icons.verified_user
                     : LicenseService.isTrialActive
                         ? Icons.lock_open_outlined
                         : Icons.lock_outline,
-                color: LicenseService.isLicensed
+                color: LicenseService.isExpiringSoon
+                    ? Colors.orangeAccent.shade100
+                    : LicenseService.isLicensed
                     ? Colors.greenAccent.shade100
                     : LicenseService.isTrialActive
                         ? Colors.orangeAccent.shade100
                         : Colors.white54,
               ),
-              tooltip: LicenseService.isLicensed
+              tooltip: LicenseService.isExpiringSoon
+                  ? 'Licența expiră în ${LicenseService.newLicenseDaysUntilExpiry} zile'
+                  : LicenseService.isLicensed
                   ? 'Licență activă'
                   : LicenseService.isTrialActive
                       ? 'Trial activ · ${LicenseService.trialDaysLeft} zile rămase'
                       : 'Trial expirat · activează licența',
-              onPressed: LicenseService.isLicensed
-                  ? null
-                  : _showLicenseRequiredDialog,
+              onPressed: _openLicenseScreen,
             ),
           if (SyncService.isSupported)
             IconButton(
@@ -1769,6 +1956,14 @@ class _InventarPageState extends State<InventarPage>
                   ? 'Sincronizare activă · ${SyncService.partnerPhone}'
                   : 'Configurează sincronizare',
               onPressed: _showSyncDialog,
+            ),
+          // Buton backup & restaurare — vizibil doar pe Android
+          if (BackupService.isSupported)
+            IconButton(
+              icon: const Icon(Icons.settings_backup_restore,
+                  color: Colors.white70),
+              tooltip: 'Backup & restaurare',
+              onPressed: _openBackupScreen,
             ),
           IconButton(
             icon: Icon(
@@ -1795,6 +1990,60 @@ class _InventarPageState extends State<InventarPage>
               padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
+                  if (_smsBlocked)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: Colors.red.shade50,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: Colors.red.shade200),
+                        ),
+                        child: ListTile(
+                          leading: Icon(Icons.sms_failed_outlined,
+                              color: Colors.red.shade700),
+                          title: Text('SMS-urile sunt blocate',
+                              style: TextStyle(
+                                  color: Colors.red.shade800,
+                                  fontWeight: FontWeight.w600)),
+                          subtitle: const Text(
+                              'Alertele de stoc și sincronizarea nu funcționează.'),
+                          trailing: TextButton(
+                            onPressed: _showSmsBlockedDialog,
+                            child: const Text('Rezolvă'),
+                          ),
+                          onTap: _showSmsBlockedDialog,
+                        ),
+                      ),
+                    ),
+                  if (_smsFailure != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Material(
+                        color: Colors.orange.shade50,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: Colors.orange.shade300),
+                        ),
+                        child: ListTile(
+                          leading: Icon(Icons.sms_failed_outlined,
+                              color: Colors.orange.shade900),
+                          title: Text('Un SMS nu a putut fi trimis',
+                              style: TextStyle(
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w600)),
+                          subtitle: Text(
+                              'Către ${_smsFailure!.phone} · '
+                              '${SmsService.fmt(_smsFailure!.failedAt)}\n'
+                              '${_smsFailure!.reason}'),
+                          isThreeLine: true,
+                          trailing: TextButton(
+                            onPressed: _dismissSmsFailure,
+                            child: const Text('OK'),
+                          ),
+                        ),
+                      ),
+                    ),
                   AnimatedSize(
                     duration: const Duration(milliseconds: 220),
                     curve: Curves.easeInOut,
@@ -1950,51 +2199,77 @@ class _InventarPageState extends State<InventarPage>
                                 horizontal: 12, vertical: 8),
                             color: const Color(0xFFE2E8F0),
                             child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  rows.length == _items.length
-                                      ? '${_items.length} produse'
-                                      : '${rows.length} din ${_items.length} produse',
-                                  style: TextStyle(
-                                      color: Colors.grey.shade600,
-                                      fontSize: 12),
+                                // Pe ecrane înguste sau cu textul mărit din setări,
+                                // grupul se micșorează în loc să depășească rândul.
+                                Flexible(
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          rows.length == _items.length
+                                              ? '${_items.length} produse'
+                                              : '${rows.length} din ${_items.length} produse',
+                                          style: TextStyle(
+                                              color: Colors.grey.shade600,
+                                              fontSize: 12),
+                                        ),
+                                        if (_isAndroid && !LicenseService.isLicensed) ...[
+                                          const SizedBox(width: 8),
+                                          Icon(
+                                            LicenseService.isTrialActive
+                                                ? Icons.lock_open_outlined
+                                                : Icons.lock_outline,
+                                            size: 12,
+                                            color: LicenseService.isTrialActive
+                                                ? Colors.orange.shade600
+                                                : Colors.red.shade600,
+                                          ),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            LicenseService.isTrialActive
+                                                ? 'Trial · ${LicenseService.trialDaysLeft} zile'
+                                                : 'Trial expirat',
+                                            style: TextStyle(
+                                                color: LicenseService.isTrialActive
+                                                    ? Colors.orange.shade700
+                                                    : Colors.red.shade700,
+                                                fontSize: 11),
+                                          ),
+                                        ],
+                                        if (SyncService.isActive) ...[
+                                          const SizedBox(width: 8),
+                                          Icon(Icons.sync,
+                                              size: 12,
+                                              color: Colors.green.shade600),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            'Sincronizat',
+                                            style: TextStyle(
+                                                color: Colors.green.shade600,
+                                                fontSize: 11),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                                if (Platform.isAndroid && !LicenseService.isLicensed) ...[
-                                  const SizedBox(width: 8),
-                                  Icon(
-                                    LicenseService.isTrialActive
-                                        ? Icons.lock_open_outlined
-                                        : Icons.lock_outline,
-                                    size: 12,
-                                    color: LicenseService.isTrialActive
-                                        ? Colors.orange.shade600
-                                        : Colors.red.shade600,
+                                // Versiunea instalată, aliniată la dreapta.
+                                if (_appVersion.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 8),
+                                    child: Text(
+                                      'v$_appVersion',
+                                      maxLines: 1,
+                                      style: TextStyle(
+                                          color: Colors.grey.shade500,
+                                          fontSize: 11),
+                                    ),
                                   ),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    LicenseService.isTrialActive
-                                        ? 'Trial · ${LicenseService.trialDaysLeft} zile'
-                                        : 'Trial expirat',
-                                    style: TextStyle(
-                                        color: LicenseService.isTrialActive
-                                            ? Colors.orange.shade700
-                                            : Colors.red.shade700,
-                                        fontSize: 11),
-                                  ),
-                                ],
-                                if (SyncService.isActive) ...[
-                                  const SizedBox(width: 8),
-                                  Icon(Icons.sync,
-                                      size: 12,
-                                      color: Colors.green.shade600),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    'Sincronizat',
-                                    style: TextStyle(
-                                        color: Colors.green.shade600,
-                                        fontSize: 11),
-                                  ),
-                                ],
                               ],
                             ),
                           ),
@@ -2138,29 +2413,32 @@ class _InventarPageState extends State<InventarPage>
                 const Text('Selectează ce produse să apară în raport:',
                     style: TextStyle(fontSize: 13, color: Colors.grey)),
                 const SizedBox(height: 12),
-                RadioListTile<_ReportFilter>(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('Toate produsele'),
-                  value: _ReportFilter.toate,
+                RadioGroup<_ReportFilter>(
                   groupValue: filter,
                   onChanged: (v) => setDs(() => filter = v!),
-                ),
-                RadioListTile<_ReportFilter>(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('Sub prag alertă (galben + roșu)'),
-                  value: _ReportFilter.subPrag,
-                  groupValue: filter,
-                  onChanged: (v) => setDs(() => filter = v!),
-                ),
-                RadioListTile<_ReportFilter>(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('Sub stoc minim (roșu)'),
-                  value: _ReportFilter.subMinim,
-                  groupValue: filter,
-                  onChanged: (v) => setDs(() => filter = v!),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      RadioListTile<_ReportFilter>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Toate produsele'),
+                        value: _ReportFilter.toate,
+                      ),
+                      RadioListTile<_ReportFilter>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Sub prag alertă (galben + roșu)'),
+                        value: _ReportFilter.subPrag,
+                      ),
+                      RadioListTile<_ReportFilter>(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Sub stoc minim (roșu)'),
+                        value: _ReportFilter.subMinim,
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

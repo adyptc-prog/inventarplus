@@ -1,0 +1,47 @@
+{
+  "publicKeyDerB64": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmSasC6q0mqsZCmpYjZi5+lYKnGbNC4vl2z4u5Kjhed75FcHKXqkVhgF/0lHrj2oZJwGk0eojh5lsQP8GCd4dPpTqhnjm2gb0GiOGmMOJO4HfcecFXTAgpslLDsd0Xzd6OIQkeqb6MyZJQC2UA78mZjqY5u3w75yMAQideqgRbDrnRebbKkxhUzU84c9cQaBet1ECud38/pwz56SsJ6odWuZYyLnINBxyFMghq7uxRFwguFsa3EsWDxlLKkTnHd2xZ741fAW00S7n93NrVek7Pwd6U/YBmP11FO+ZqtUOm5BhbwszOj7b2/6xfllwjiDQFAo0p8As2PRs7tMrQ8zxQwIDAQAB",
+  "timed": {
+    "payload": {
+      "licenseId": "864dd6ed-0768-4c2c-9692-30dec0810802",
+      "businessId": "inventarplus-1700000000000",
+      "stickId": "",
+      "issuedAt": "2026-09-25T16:04:37Z",
+      "isLifetime": false,
+      "validUntil": "2030-01-01T00:00:00Z"
+    },
+    "signature": "Yd3URIBmq2hdhAV17aahNl2X2gPH14ia4hgvL3NaNTxiT1Q951SI2MNOG/+c198a80xou4PNLRjlHVKBQ8WLpYui3dvcegGns+Ek4awRg6Mp8aQ6VRQWGpc0hBwx0iqjybeymcYkm4J886qLle2Zw+fc7YEnMWbLYN3MWYW8MCb9Xz/RCyP5ueoV5aSdYBPBwIfmZV+uk/t/tDhNiEXsOf9OfEbT3+0XeqDdrJc/8z6wuPMCISOGBrBfCxjnfjnoabMkiPdAdYwJwLAiyUvIGZj+lV9Itip5lP4/bShdzQSMdDSPAM1dzcv+9Xlai/X/jvi6G16Jo8uMaoP0WfT8kw=="
+  },
+  "timedLater": {
+    "payload": {
+      "licenseId": "6686fe14-60f8-4188-9aa5-91a0a307eb69",
+      "businessId": "inventarplus-1700000000000",
+      "stickId": "",
+      "issuedAt": "2026-09-25T16:04:37Z",
+      "isLifetime": false,
+      "validUntil": "2031-01-01T00:00:00Z"
+    },
+    "signature": "EDnymYMsFDZ8Jya/BYiQEGOxLdzK6mO2EoqXhnZZFl88ZfKqzUsUr1L7iSWiWZ7HjbrLCB1npEj6GfDrKC0F/in6bivdGPUo+9CW2X/KY80F++ryJlNZLdjWBWa78A+bGgZfZMkWvW1b5ouwsUhy/k7FrirgwhlXntUGVLt69aQcpqYrMGjr9QlRVtjfUeGPuX6WJQpPOJjukQ9eeMLWRf5Stv55OwNdqQWX9nL3R7aqsfkPeX1WIYkKI5IHvYhXDBWCbttjFKpx8ud+0tfIGq6Z8CVZnJxW7iINVHw1AkXRyk/9wiXD/s/glnCoinp4CFtk0fhjKjcDJRFCi/giUQ=="
+  },
+  "lifetime": {
+    "payload": {
+      "licenseId": "689c42ae-8cba-47e8-8be3-57d1eda8c086",
+      "businessId": "inventarplus-1700000000000",
+      "stickId": "",
+      "issuedAt": "2026-09-25T16:04:37Z",
+      "isLifetime": true,
+      "validUntil": null
+    },
+    "signature": "O+06ffCGpEu1rYtX+ascSxziZaoB6C9f390rQh5lasmKfJbXKjMYxgJRUyQqafFM5CyjAKcRdrLtipX6ivFW2Ta8nTlLKRnHpUfKmK2mbrY/J6WVAEN3ejqomnNwkXDT53BpqAcV5H5zQJLu0BRSYNxV8XGPyFYEi9c1Kcp3ZgPHeAHMSyGp3MNx5b6Z57QBmX7+/xxcuycNTXyJ1R5OYamCEwO4QRxX/i41mOrBdMNUKB7HHqWC+IPofx1CWgBHWX47c8Jtt/iL8u7tft9/XkB2ODk/49WqHrWFy8BxbcHUVpw20kvqFWzWxX4lvYc6HiHPRdo0h4fAb8vg2SG0Sg=="
+  },
+  "otherInstall": {
+    "payload": {
+      "licenseId": "c103f008-5375-44e8-b0ac-030ebfb4ae4c",
+      "businessId": "inventarplus-1800000000000",
+      "stickId": "",
+      "issuedAt": "2026-09-25T16:04:37Z",
+      "isLifetime": false,
+      "validUntil": "2030-01-01T00:00:00Z"
+    },
+    "signature": "NWjD0dPqgdpJILZ1qbg6dxL/tWiZdbq59L8LBgW/i+3SYv+55LgJAbwSmNlhMNHMuPHR4nhVRpvrICDufFxluPFlv4mFY/wOATbu5brI6H20JqBi3wbmT8zClIDFi7fQH3nAWOuQ/AF99eS5SQuV/n4k4hg4+FzniyzbPYpLJnua2oqIZyZ7OR4gglRMLBic0/zRlmTn7CHJXf758sd9uEzCa3a4+F0B4v+ALGHqvxrhtYEWUTIHPHEg/TORBRwLCiUqRxW6ITsgdoANXJ+rFwhSSkh9jCpS3ohXXJAqXtXb6dJRVvMc+woEIYwQnV0Arm3tvAQO3by3DMC7/ixJyg=="
+  }
+}
