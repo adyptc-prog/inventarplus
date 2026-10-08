@@ -1,7 +1,7 @@
 # Inventar+
 
 **Stock management with barcode scanning, low-stock alerts and SMS notifications.**
-No server. No internet. No accounts.
+No server. Works offline. No accounts.
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Flutter](https://img.shields.io/badge/Flutter-3.10%2B-02569B?logo=flutter)](https://flutter.dev)
@@ -28,6 +28,12 @@ no internet connection.
 - **Reports** for any period, including what was moved or deleted from stock
 - **Backup and restore**, daily and manual, to phone storage or a USB stick
 - 30-day free trial, then an activation license (see [Free Trial & Activation License](#free-trial--activation-license))
+
+**Privacy note:** barcode and QR scanning uses Google ML Kit, which runs on the phone (camera images
+never leave it) but sends Google technical diagnostics and usage data (device and app information,
+performance, error codes), as described in
+[Google's ML Kit data disclosure](https://developers.google.com/ml-kit/android-data-disclosure).
+It is the only reason the app has the Internet permission. Products, stock and client data never leave the phone.
 
 ---
 
