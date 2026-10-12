@@ -26,13 +26,14 @@ object SmsSender {
 
     fun send(context: Context, phone: String, message: String) {
         val app = context.applicationContext
+        AppLang.sync(app)
         try {
             val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 app.getSystemService(SmsManager::class.java)
             } else {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
-            } ?: throw IllegalStateException("Serviciul SMS nu este disponibil pe acest telefon.")
+            } ?: throw IllegalStateException(tr("Serviciul SMS nu este disponibil pe acest telefon.", "The SMS service is not available on this phone."))
 
             val parts = smsManager.divideMessage(message)
             val sentIntents = ArrayList<PendingIntent>(parts.size)
@@ -68,6 +69,7 @@ object SmsSender {
 class SmsSentReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val phone = intent.getStringExtra(EXTRA_PHONE).orEmpty()
+        AppLang.sync(context)
         if (resultCode == Activity.RESULT_OK) {
             SmsStatus.recordSuccess(context)
         } else {

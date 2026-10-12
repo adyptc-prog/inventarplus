@@ -86,7 +86,7 @@ object LicenseStore {
 
     fun check(context: Context): LicenseCheck {
         val content = storedLicense(context)
-            ?: return LicenseCheck("missing", "No license file selected.")
+            ?: return LicenseCheck("missing", tr("Niciun fișier de licență selectat.", "No license file selected."))
         return verifier.evaluate(content, getOrCreateBusinessId(context), effectiveNow(context))
     }
 

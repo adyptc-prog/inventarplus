@@ -38,6 +38,8 @@ object BackupFormat {
     // se suprascriu la restore.
     private val EXCLUDED_KEYS = setOf(
         "flutter.license_expiry_warned_on",
+        // Limba e a telefonului, nu a datelor: un backup restaurat nu o schimbă.
+        "flutter.app_language",
     )
 
     // Partenerul de sincronizare. La restore pe telefonul partener, cel din
@@ -87,20 +89,23 @@ object BackupFormat {
         val root = try {
             JSONObject(content)
         } catch (_: Exception) {
-            throw InvalidBackupException("Fișierul nu este un backup Inventar+.")
+            throw InvalidBackupException(tr("Fișierul nu este un backup Inventar+.", "The file is not an Inventar+ backup."))
         }
         if (root.optString("app") != APP_ID) {
-            throw InvalidBackupException("Fișierul nu este un backup Inventar+.")
+            throw InvalidBackupException(tr("Fișierul nu este un backup Inventar+.", "The file is not an Inventar+ backup."))
         }
         val version = root.optInt("formatVersion", -1)
         if (version < 1 || version > FORMAT_VERSION) {
             throw InvalidBackupException(
-                "Backup creat de o versiune mai nouă a aplicației. Actualizează aplicația."
+                tr(
+                    "Backup creat de o versiune mai nouă a aplicației. Actualizează aplicația.",
+                    "The backup was created by a newer version of the app. Update the app.",
+                )
             )
         }
         val data = root.optString("data")
         if (data.isEmpty() || sha256(data) != root.optString("checksum")) {
-            throw InvalidBackupException("Backup-ul este corupt (checksum invalid).")
+            throw InvalidBackupException(tr("Backup-ul este corupt (checksum invalid).", "The backup is corrupted (invalid checksum)."))
         }
 
         val dataJson = JSONObject(data)

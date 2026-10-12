@@ -80,34 +80,34 @@ class LicenseVerifier(
             val issuedAtStr = payload.optString("issuedAt")
 
             if (licenseBusinessId.isBlank()) {
-                return LicenseCheck("invalid", "License has no installation code.")
+                return LicenseCheck("invalid", tr("Licența nu are cod de instalare.", "License has no installation code."))
             }
             if (expectedBusinessId != null && licenseBusinessId != expectedBusinessId) {
-                return LicenseCheck("invalid", "License belongs to another installation.")
+                return LicenseCheck("invalid", tr("Licența aparține altei instalări.", "License belongs to another installation."))
             }
 
             val issuedAtMs = parseIso8601Utc(issuedAtStr)
             if (issuedAtMs != null && nowMs < issuedAtMs) {
-                return LicenseCheck("invalid", "Device clock is set before the license issue date.")
+                return LicenseCheck("invalid", tr("Ceasul telefonului e setat înaintea datei de emitere a licenței.", "Device clock is set before the license issue date."))
             }
 
             var validUntilMs: Long? = null
             if (!isLifetime) {
                 validUntilMs = parseIso8601Utc(validUntilStr)
-                    ?: return LicenseCheck("invalid", "License has no valid expiry date.")
+                    ?: return LicenseCheck("invalid", tr("Licența nu are o dată de expirare validă.", "License has no valid expiry date."))
                 if (nowMs >= validUntilMs) {
-                    return LicenseCheck("invalid", "License has expired.")
+                    return LicenseCheck("invalid", tr("Licența a expirat.", "License has expired."))
                 }
             }
 
             if (!verifySignature(payload, signature)) {
-                return LicenseCheck("invalid", "License signature is invalid.")
+                return LicenseCheck("invalid", tr("Semnătura licenței nu este validă.", "License signature is invalid."))
             }
 
             if (isLifetime || validUntilMs == null) {
                 LicenseCheck(
                     status = "active",
-                    message = "Lifetime license active.",
+                    message = tr("Licență pe viață activă.", "Lifetime license active."),
                     businessId = licenseBusinessId,
                     licenseId = payload.optString("licenseId"),
                     isLifetime = true,
@@ -116,8 +116,8 @@ class LicenseVerifier(
                 val daysRemaining = ((validUntilMs - nowMs) / DAY_MS).toInt()
                 LicenseCheck(
                     status = "active",
-                    message = if (daysRemaining <= 1) "License expires tomorrow."
-                              else "License active. $daysRemaining days remaining.",
+                    message = if (daysRemaining <= 1) tr("Licența expiră mâine.", "License expires tomorrow.")
+                              else tr("Licență activă. $daysRemaining zile rămase.", "License active. $daysRemaining days remaining."),
                     businessId = licenseBusinessId,
                     licenseId = payload.optString("licenseId"),
                     isLifetime = false,

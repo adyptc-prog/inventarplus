@@ -15,18 +15,22 @@ object SmsStatus {
     private const val KEY_SUCCESS_AT = "last_success_at"
     private const val KEY_DISMISSED_AT = "dismissed_at"
 
-    const val PERMISSION_MISSING = "Permisiunea SMS lipsește."
+    val PERMISSION_MISSING: String
+        get() = tr("Permisiunea SMS lipsește.", "The SMS permission is missing.")
 
     // Coduri SmsManager.RESULT_ERROR_* (valori stabile din API-ul Android).
     fun describe(resultCode: Int): String = when (resultCode) {
-        1 -> "Eroare generală la trimitere (verifică creditul/abonamentul și SIM-ul implicit pentru SMS)."
-        2 -> "Rețeaua mobilă este oprită (mod avion?)."
-        3 -> "Mesajul nu a putut fi codificat."
-        4 -> "Fără semnal / serviciu mobil."
-        5 -> "Limita de SMS-uri a sistemului a fost depășită."
-        6 -> "Număr blocat de lista de apelare fixă (FDN)."
-        7, 8 -> "Trimiterea către numere scurte nu este permisă."
-        else -> "Trimiterea a eșuat (cod $resultCode)."
+        1 -> tr(
+            "Eroare generală la trimitere (verifică creditul/abonamentul și SIM-ul implicit pentru SMS).",
+            "General sending error (check your credit/plan and the default SIM for SMS).",
+        )
+        2 -> tr("Rețeaua mobilă este oprită (mod avion?).", "The mobile network is off (airplane mode?).")
+        3 -> tr("Mesajul nu a putut fi codificat.", "The message could not be encoded.")
+        4 -> tr("Fără semnal / serviciu mobil.", "No signal / mobile service.")
+        5 -> tr("Limita de SMS-uri a sistemului a fost depășită.", "The system SMS limit was exceeded.")
+        6 -> tr("Număr blocat de lista de apelare fixă (FDN).", "Number blocked by the fixed dialing list (FDN).")
+        7, 8 -> tr("Trimiterea către numere scurte nu este permisă.", "Sending to short codes is not allowed.")
+        else -> tr("Trimiterea a eșuat (cod $resultCode).", "Sending failed (code $resultCode).")
     }
 
     /** Un eșec se afișează până când e închis de utilizator. */

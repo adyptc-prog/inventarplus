@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'backup_service.dart';
+import 'l10n.dart';
 
 // ─── Ecran backup & restaurare ────────────────────────────────────────────────
 class BackupScreen extends StatefulWidget {
@@ -57,13 +58,13 @@ class _BackupScreenState extends State<BackupScreen> {
 
   Future<void> _pickFolder(String destination) => _run(() async {
         _status = await BackupService.pickFolder(destination);
-        _setMessage('Folderul de backup a fost setat.');
+        _setMessage(tr('Folderul de backup a fost setat.', 'The backup folder has been set.'));
       });
 
   Future<void> _create() => _run(() async {
         final b = await BackupService.createBackup();
         await _loadStatus();
-        _setMessage('Backup creat: ${b.name}');
+        _setMessage(tr('Backup creat: ${b.name}', 'Backup created: ${b.name}'));
       });
 
   // Confirmare + alegerea partenerului de sincronizare; întoarce null la anulare.
@@ -73,22 +74,26 @@ class _BackupScreenState extends State<BackupScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDs) => AlertDialog(
-          title: const Text('Restaurezi backup-ul?'),
+          title: Text(tr('Restaurezi backup-ul?', 'Restore the backup?')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Toate datele actuale din aplicație vor fi înlocuite cu cele '
-                  'din $source.'),
+              Text(tr('Toate datele actuale din aplicație vor fi înlocuite cu cele '
+                  'din $source.',
+              'All current data in the app will be replaced with the data '
+              'from $source.')),
               const SizedBox(height: 12),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
                 value: keepPartners,
                 onChanged: (v) => setDs(() => keepPartners = v ?? true),
-                title: const Text('Păstrează partenerul de sincronizare actual'),
-                subtitle: const Text(
-                  'Debifează doar dacă restaurezi pe același telefon de pe care '
+                title: Text(tr('Păstrează partenerul de sincronizare actual', 'Keep the current sync partner')),
+                subtitle: Text(
+                  tr('Debifează doar dacă restaurezi pe același telefon de pe care '
                   'a fost făcut backup-ul.',
+                  'Untick only if you are restoring on the same phone '
+                  'the backup was made on.'),
                   style: TextStyle(fontSize: 12),
                 ),
               ),
@@ -97,11 +102,11 @@ class _BackupScreenState extends State<BackupScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Anulează'),
+              child: Text(tr('Anulează', 'Cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, keepPartners),
-              child: const Text('Restaurează'),
+              child: Text(tr('Restaurează', 'Restore')),
             ),
           ],
         ),
@@ -123,7 +128,7 @@ class _BackupScreenState extends State<BackupScreen> {
         await widget.onRestored?.call(ok);
       }
       await _loadStatus();
-      _setMessage('Backup restaurat. Datele au fost reîncărcate.');
+      _setMessage(tr('Backup restaurat. Datele au fost reîncărcate.', 'Backup restored. The data has been reloaded.'));
     });
   }
 
@@ -132,13 +137,13 @@ class _BackupScreenState extends State<BackupScreen> {
     await _run(() async => backups = await BackupService.listBackups());
     if (!mounted || backups == null) return; // eroarea e deja afișată
     if (backups!.isEmpty) {
-      setState(() => _setMessage('Nu există backup-uri în folderul ales.'));
+      setState(() => _setMessage(tr('Nu există backup-uri în folderul ales.', 'There are no backups in the chosen folder.')));
       return;
     }
     final chosen = await showDialog<BackupEntry>(
       context: context,
       builder: (ctx) => SimpleDialog(
-        title: const Text('Alege backup-ul'),
+        title: Text(tr('Alege backup-ul', 'Choose the backup')),
         children: [
           for (final b in backups!)
             SimpleDialogOption(
@@ -148,7 +153,7 @@ class _BackupScreenState extends State<BackupScreen> {
                 leading: Icon(b.auto ? Icons.schedule : Icons.save_outlined),
                 title: Text(_formatDate(b.modifiedAt)),
                 subtitle: Text(
-                    '${b.auto ? 'Automat' : 'Manual'} · ${(b.size / 1024).toStringAsFixed(1)} KB'),
+                    tr('${b.auto ? 'Automat' : 'Manual'} · ${(b.size / 1024).toStringAsFixed(1)} KB', '${b.auto ? 'Automatic' : 'Manual'} · ${(b.size / 1024).toStringAsFixed(1)} KB')),
               ),
             ),
         ],
@@ -156,13 +161,13 @@ class _BackupScreenState extends State<BackupScreen> {
     );
     if (chosen == null || !mounted) return;
     await _restore(
-      'backup-ul din ${_formatDate(chosen.modifiedAt)}',
+      tr('backup-ul din ${_formatDate(chosen.modifiedAt)}', 'the backup from ${_formatDate(chosen.modifiedAt)}'),
       (keep) => BackupService.restoreBackup(chosen.id, keepSyncPartners: keep),
     );
   }
 
   Future<void> _restoreFromFile() => _restore(
-        'fișierul pe care îl vei alege',
+        tr('fișierul pe care îl vei alege', 'the file you choose'),
         (keep) => BackupService.pickAndRestoreBackup(keepSyncPartners: keep),
       );
 
@@ -173,22 +178,22 @@ class _BackupScreenState extends State<BackupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Backup & restaurare'),
+        title: Text(tr('Backup & restaurare', 'Backup & restore')),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('Destinație backup',
+          Text(tr('Destinație backup', 'Backup destination'),
               style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           SegmentedButton<String>(
-            segments: const [
+            segments: [
               ButtonSegment(
-                  value: 'usb', icon: Icon(Icons.usb), label: Text('Stick USB')),
+                  value: 'usb', icon: Icon(Icons.usb), label: Text(tr('Stick USB', 'USB stick'))),
               ButtonSegment(
                   value: 'phone',
                   icon: Icon(Icons.phone_android),
-                  label: Text('Memoria telefonului')),
+                  label: Text(tr('Memoria telefonului', 'Phone storage'))),
             ],
             emptySelectionAllowed: true,
             selected: {if (s.destination != null) s.destination!},
@@ -208,18 +213,18 @@ class _BackupScreenState extends State<BackupScreen> {
                     : Colors.orange.shade800,
               ),
               title: Text(!s.hasFolder
-                  ? 'Niciun folder ales'
+                  ? tr('Niciun folder ales', 'No folder chosen')
                   : folderOk
                       ? s.folderName!
-                      : 'Folderul nu este accesibil'),
+                      : tr('Folderul nu este accesibil', 'The folder is not accessible')),
               subtitle: Text(!s.hasFolder
-                  ? 'Alege destinația de mai sus.'
+                  ? tr('Alege destinația de mai sus.', 'Choose the destination above.')
                   : folderOk
-                      ? 'Backup automat zilnic, în jurul orei 00:00.'
-                      : 'Conectează stick-ul sau alege din nou folderul.'),
+                      ? tr('Backup automat zilnic, în jurul orei 00:00.', 'Automatic daily backup, around 00:00.')
+                      : tr('Conectează stick-ul sau alege din nou folderul.', 'Connect the stick or choose the folder again.')),
               trailing: s.hasFolder
                   ? IconButton(
-                      tooltip: 'Schimbă folderul',
+                      tooltip: tr('Schimbă folderul', 'Change folder'),
                       icon: const Icon(Icons.edit_outlined),
                       onPressed: _busy
                           ? null
@@ -238,32 +243,32 @@ class _BackupScreenState extends State<BackupScreen> {
                   color: s.lastAutoError != null ? Colors.red.shade700 : null,
                 ),
                 title: Text(s.lastAutoAt != null
-                    ? 'Ultimul backup automat: ${_formatDate(s.lastAutoAt!)}'
-                    : 'Niciun backup automat încă'),
+                    ? tr('Ultimul backup automat: ${_formatDate(s.lastAutoAt!)}', 'Last automatic backup: ${_formatDate(s.lastAutoAt!)}')
+                    : tr('Niciun backup automat încă', 'No automatic backup yet')),
                 subtitle: s.lastAutoError != null
-                    ? Text('Ultima încercare a eșuat: ${s.lastAutoError}',
+                    ? Text(tr('Ultima încercare a eșuat: ${s.lastAutoError}', 'The last attempt failed: ${s.lastAutoError}'),
                         style: TextStyle(color: Colors.red.shade700))
                     : s.lastManualAt != null
-                        ? Text('Ultimul backup manual: ${_formatDate(s.lastManualAt!)}')
+                        ? Text(tr('Ultimul backup manual: ${_formatDate(s.lastManualAt!)}', 'Last manual backup: ${_formatDate(s.lastManualAt!)}'))
                         : null,
               ),
             ),
           const SizedBox(height: 16),
           FilledButton.icon(
             icon: const Icon(Icons.backup),
-            label: const Text('Creează backup acum'),
+            label: Text(tr('Creează backup acum', 'Create backup now')),
             onPressed: _busy || !folderOk ? null : _create,
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             icon: const Icon(Icons.restore),
-            label: const Text('Restaurează din folderul de backup'),
+            label: Text(tr('Restaurează din folderul de backup', 'Restore from the backup folder')),
             onPressed: _busy || !folderOk ? null : _restoreFromFolder,
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             icon: const Icon(Icons.file_open_outlined),
-            label: const Text('Restaurează din alt fișier'),
+            label: Text(tr('Restaurează din alt fișier', 'Restore from another file')),
             onPressed: _busy ? null : _restoreFromFile,
           ),
           if (_busy) ...[
@@ -293,11 +298,16 @@ class _BackupScreenState extends State<BackupScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'Backup-ul conține toate produsele, setările și codul de '
+                tr('Backup-ul conține toate produsele, setările și codul de '
                 'instalare împreună cu licența — după restaurare pe un telefon '
                 'nou, licența funcționează în continuare.\n\n'
                 'Se păstrează ultimele 14 backup-uri automate; cele manuale '
                 'nu se șterg niciodată automat.',
+                'The backup contains all products, settings and the installation '
+                'code together with the license — after restoring on a new '
+                'phone, the license keeps working.\n\n'
+                'The last 14 automatic backups are kept; manual ones '
+                'are never deleted automatically.'),
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),

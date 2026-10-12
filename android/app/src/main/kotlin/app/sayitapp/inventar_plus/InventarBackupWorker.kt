@@ -21,6 +21,7 @@ class InventarBackupWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
+        AppLang.sync(appContext)
         if (BackupManager.folderUri(appContext) == null) return Result.success()
         try {
             BackupManager.createBackup(appContext, auto = true)

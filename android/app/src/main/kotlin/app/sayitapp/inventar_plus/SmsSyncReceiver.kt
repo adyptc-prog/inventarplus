@@ -55,6 +55,7 @@ class SmsSyncReceiver : BroadcastReceiver() {
         val pdus = Telephony.Sms.Intents.getMessagesFromIntent(intent)
             ?: return
 
+        AppLang.sync(context)
         val partnerPhone = context
             .getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
             .getString("flutter.sync_partner_phone", null)

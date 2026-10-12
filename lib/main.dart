@@ -5,6 +5,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -14,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'backup_screen.dart';
 import 'backup_service.dart';
+import 'l10n.dart';
 import 'license_screen.dart';
 import 'license_service.dart';
 
@@ -24,8 +26,23 @@ const _kSmsTemplateKey   = 'sms_template';
 const _kDeletedBufferKey = 'inventar_deleted_buffer';
 const _kSyncPartnerKey   = 'sync_partner_phone';
 
-const _kDefaultSmsTemplate =
+const _kDefaultSmsTemplateRo =
     'Alertă stoc: [DENUMIRE]. Stoc actual: [STOC] (minim: [STOC_MINIM]).';
+const _kDefaultSmsTemplateEn =
+    'Stock alert: [NAME]. Current stock: [STOCK] (minimum: [MIN_STOCK]).';
+
+// Mesajul implicit urmează limba aplicației. Un mesaj salvat identic cu unul
+// din cele implicite e tratat tot ca implicit; unul editat de utilizator
+// rămâne neatins la schimbarea limbii.
+String get _defaultSmsTemplate =>
+    tr(_kDefaultSmsTemplateRo, _kDefaultSmsTemplateEn);
+
+String _effectiveSmsTemplate(String? saved) =>
+    (saved == null ||
+            saved == _kDefaultSmsTemplateRo ||
+            saved == _kDefaultSmsTemplateEn)
+        ? _defaultSmsTemplate
+        : saved;
 
 // ─── Helper: ID unic stabil pentru sincronizare ───────────────────────────────
 String _generateSyncId() {
@@ -88,20 +105,20 @@ class AlertService {
     if (level == 0) return;
 
     final title = level == 2
-        ? '🔴 Stoc sub minim: ${p.denumire}'
-        : '⚠️ Stoc sub prag alertă: ${p.denumire}';
-    final body = 'Stoc actual: ${p.stocActual}  ·  Minim: ${p.stocMinim}';
+        ? tr('🔴 Stoc sub minim: ${p.denumire}', '🔴 Stock below minimum: ${p.denumire}')
+        : tr('⚠️ Stoc sub prag alertă: ${p.denumire}', '⚠️ Stock below alert threshold: ${p.denumire}');
+    final body = tr('Stoc actual: ${p.stocActual}  ·  Minim: ${p.stocMinim}', 'Current stock: ${p.stocActual}  ·  Minimum: ${p.stocMinim}');
 
     try {
       await _plugin.show(
         id: _notificationId(p),
         title: title,
         body: body,
-        notificationDetails: const NotificationDetails(
+        notificationDetails: NotificationDetails(
           android: AndroidNotificationDetails(
             'stock_alerts',
-            'Alerte stoc',
-            channelDescription: 'Notificări la atingerea pragurilor de stoc',
+            tr('Alerte stoc', 'Stock alerts'),
+            channelDescription: tr('Notificări la atingerea pragurilor de stoc', 'Notifications when stock thresholds are reached'),
             importance: Importance.high,
             priority: Priority.high,
           ),
@@ -112,7 +129,7 @@ class AlertService {
 
     final phones = p.phones;
     if (phones.isEmpty) return;
-    final prefix = level == 2 ? 'STOC EPUIZAT: ' : 'ALERTĂ STOC: ';
+    final prefix = level == 2 ? tr('STOC EPUIZAT: ', 'CRITICAL STOCK: ') : tr('ALERTĂ STOC: ', 'STOCK ALERT: ');
     final msg = prefix + _buildSmsText(p, template);
     for (final phone in phones) {
       try {
@@ -122,11 +139,17 @@ class AlertService {
     }
   }
 
+  // Variabilele au nume în ambele limbi; un mesaj scris cu cele românești
+  // funcționează și cu aplicația în engleză, și invers.
   static String _buildSmsText(Product p, String template) => template
       .replaceAll('[DENUMIRE]', p.denumire)
-      .replaceAll('[STOC]', p.stocActual.toString())
+      .replaceAll('[NAME]', p.denumire)
       .replaceAll('[STOC_MINIM]', p.stocMinim.toString())
-      .replaceAll('[PRAG_ALERTA]', p.pragAlerta.toString());
+      .replaceAll('[MIN_STOCK]', p.stocMinim.toString())
+      .replaceAll('[PRAG_ALERTA]', p.pragAlerta.toString())
+      .replaceAll('[THRESHOLD]', p.pragAlerta.toString())
+      .replaceAll('[STOC]', p.stocActual.toString())
+      .replaceAll('[STOCK]', p.stocActual.toString());
 }
 
 // Testele rulează pe desktop — permite simularea Android-ului pentru
@@ -498,11 +521,11 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: const Text('Scanează cod de bare'),
+        title: Text(tr('Scanează cod de bare', 'Scan barcode')),
         actions: [
           IconButton(
             icon: const Icon(Icons.flash_on),
-            tooltip: 'Blitz',
+            tooltip: tr('Blitz', 'Flash'),
             onPressed: () => _controller.toggleTorch(),
           ),
         ],
@@ -516,6 +539,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AlertService.init();
+  await AppLang.load();
   runApp(const InventarPlusApp());
 }
 
@@ -524,9 +548,26 @@ class InventarPlusApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // La schimbarea limbii, aplicația se reconstruiește de la ecranul
+    // principal (cheia se schimbă), ca toate textele să apară în limba nouă.
+    return ValueListenableBuilder<String>(
+      valueListenable: AppLang.code,
+      builder: (context, lang, _) => _buildApp(lang),
+    );
+  }
+
+  Widget _buildApp(String lang) {
     return MaterialApp(
+      key: ValueKey(lang),
       title: 'Inventar+',
       debugShowCheckedModeBanner: false,
+      locale: Locale(lang),
+      supportedLocales: const [Locale('ro'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF14304F),
@@ -566,7 +607,7 @@ class _InventarPageState extends State<InventarPage>
 
   final List<Product>        _items         = [];
   final List<DeletedProduct> _deletedBuffer = [];
-  String _smsTemplate = _kDefaultSmsTemplate;
+  String _smsTemplate = _defaultSmsTemplate;
 
   @override
   void initState() {
@@ -641,14 +682,14 @@ class _InventarPageState extends State<InventarPage>
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(children: [
+        title: Row(children: [
           Icon(Icons.sms_failed_outlined, color: Colors.red),
           SizedBox(width: 8),
-          Expanded(child: Text('SMS-urile sunt blocate')),
+          Expanded(child: Text(tr('SMS-urile sunt blocate', 'SMS is blocked'))),
         ]),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Text(
-            'Fără permisiunea SMS nu pleacă alertele de stoc, sincronizarea '
+            tr('Fără permisiunea SMS nu pleacă alertele de stoc, sincronizarea '
             'și licența către telefonul partener.\n\n'
             'Dacă telefonul spune că setarea e restricționată „pentru '
             'siguranța ta”:\n'
@@ -657,12 +698,21 @@ class _InventarPageState extends State<InventarPage>
             'și confirmă.\n'
             '3. Permisiuni → SMS → Permite.\n'
             '4. Revino în aplicație.',
+            'Without the SMS permission, stock alerts, sync and the license '
+            'for the partner phone cannot be sent.\n\n'
+            'If the phone says the setting is restricted “for your '
+            'security”:\n'
+            '1. Tap “Open settings”.\n'
+            '2. Tap ⋮ (top right) → “Allow restricted settings” '
+            'and confirm.\n'
+            '3. Permissions → SMS → Allow.\n'
+            '4. Come back to the app.'),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Închide'),
+            child: Text(tr('Închide', 'Close')),
           ),
           TextButton(
             onPressed: () async {
@@ -670,14 +720,14 @@ class _InventarPageState extends State<InventarPage>
               await _checkSmsPermission();
               if (ok && ctx.mounted) Navigator.pop(ctx);
             },
-            child: const Text('Cere permisiunea'),
+            child: Text(tr('Cere permisiunea', 'Request permission')),
           ),
           FilledButton(
             onPressed: () async {
               Navigator.pop(ctx);
               await openAppSettings();
             },
-            child: const Text('Deschide setările'),
+            child: Text(tr('Deschide setările', 'Open settings')),
           ),
         ],
       ),
@@ -745,7 +795,7 @@ class _InventarPageState extends State<InventarPage>
       final prefs   = await SharedPreferences.getInstance();
       final jsonStr = prefs.getString(_kItemsKey);
       nextNumber    = prefs.getInt(_kNextNumberKey) ?? 1;
-      _smsTemplate  = prefs.getString(_kSmsTemplateKey) ?? _kDefaultSmsTemplate;
+      _smsTemplate  = _effectiveSmsTemplate(prefs.getString(_kSmsTemplateKey));
       final deletedStr = prefs.getString(_kDeletedBufferKey);
       if (deletedStr != null) {
         final deletedList = (jsonDecode(deletedStr) as List<dynamic>)
@@ -771,11 +821,11 @@ class _InventarPageState extends State<InventarPage>
       });
     } else {
       final seed = [
-        Product(syncId: _generateSyncId(), number: 1, denumire: 'Făină albă 1kg',          descriere: 'Ambalaj hârtie',  codBare: '5941234500011', stocActual: 40, stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
-        Product(syncId: _generateSyncId(), number: 2, denumire: 'Ulei floarea-soarelui 1L', descriere: 'Sticlă PET',      codBare: '5941234500028', stocActual: 15, stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
-        Product(syncId: _generateSyncId(), number: 3, denumire: 'Zahăr tos 1kg',            descriere: 'Ambalaj plastic', codBare: '5941234500035', stocActual: 5,  stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
-        Product(syncId: _generateSyncId(), number: 4, denumire: 'Orez bob lung 1kg',        descriere: 'Ambalaj plastic', codBare: '5941234500042', stocActual: 60, stocMinim: 15, pragAlerta: 25, createdAt: DateTime.now()),
-        Product(syncId: _generateSyncId(), number: 5, denumire: 'Detergent vase 500ml',     descriere: 'Sticlă cu pompă', codBare: '5941234500059', stocActual: 8,  stocMinim: 8,  pragAlerta: 15, createdAt: DateTime.now()),
+        Product(syncId: _generateSyncId(), number: 1, denumire: tr('Făină albă 1kg', 'White flour 1kg'),          descriere: tr('Ambalaj hârtie', 'Paper packaging'),  codBare: '5941234500011', stocActual: 40, stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
+        Product(syncId: _generateSyncId(), number: 2, denumire: tr('Ulei floarea-soarelui 1L', 'Sunflower oil 1L'), descriere: tr('Sticlă PET', 'PET bottle'),      codBare: '5941234500028', stocActual: 15, stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
+        Product(syncId: _generateSyncId(), number: 3, denumire: tr('Zahăr tos 1kg', 'Granulated sugar 1kg'),            descriere: tr('Ambalaj plastic', 'Plastic packaging'), codBare: '5941234500035', stocActual: 5,  stocMinim: 10, pragAlerta: 20, createdAt: DateTime.now()),
+        Product(syncId: _generateSyncId(), number: 4, denumire: tr('Orez bob lung 1kg', 'Long grain rice 1kg'),        descriere: tr('Ambalaj plastic', 'Plastic packaging'), codBare: '5941234500042', stocActual: 60, stocMinim: 15, pragAlerta: 25, createdAt: DateTime.now()),
+        Product(syncId: _generateSyncId(), number: 5, denumire: tr('Detergent vase 500ml', 'Dish soap 500ml'),     descriere: tr('Sticlă cu pompă', 'Pump bottle'), codBare: '5941234500059', stocActual: 8,  stocMinim: 8,  pragAlerta: 15, createdAt: DateTime.now()),
       ];
       setState(() {
         _items.addAll(seed.map((p) => p.copyWith(lastAlertLevel: alertLevelFor(p))));
@@ -905,23 +955,25 @@ class _InventarPageState extends State<InventarPage>
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Row(children: [
+        title: Row(children: [
           Icon(Icons.vpn_key, color: Color(0xFF08151F)),
           SizedBox(width: 8),
-          Text('Activare Licență'),
+          Text(tr('Activare Licență', 'License activation')),
         ]),
-        content: const Text(
-          'A fost detectat un fișier de licență Inventar+.\n\n'
+        content: Text(
+          tr('A fost detectat un fișier de licență Inventar+.\n\n'
           'Doriți să activați aplicația acum?',
+          'An Inventar+ license file was detected.\n\n'
+          'Do you want to activate the app now?'),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Anulează'),
+            child: Text(tr('Anulează', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Activează'),
+            child: Text(tr('Activează', 'Activate')),
           ),
         ],
       ),
@@ -1008,7 +1060,7 @@ class _InventarPageState extends State<InventarPage>
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Licența a fost primită de la telefonul partener.'),
+        content: Text(tr('Licența a fost primită de la telefonul partener.', 'The license was received from the partner phone.')),
         backgroundColor: Colors.green.shade700,
       ),
     );
@@ -1020,12 +1072,12 @@ class _InventarPageState extends State<InventarPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(days <= 1
-            ? 'Licența expiră mâine! Reînnoiește-o pentru a evita întreruperile.'
-            : 'Licența expiră în $days zile. Reînnoiește-o pentru a evita întreruperile.'),
+            ? tr('Licența expiră mâine! Reînnoiește-o pentru a evita întreruperile.', 'The license expires tomorrow! Renew it to avoid interruptions.')
+            : tr('Licența expiră în $days zile. Reînnoiește-o pentru a evita întreruperile.', 'The license expires in $days days. Renew it to avoid interruptions.')),
         backgroundColor: Colors.orange.shade800,
         duration: const Duration(seconds: 6),
         action: SnackBarAction(
-          label: 'Detalii',
+          label: tr('Detalii', 'Details'),
           textColor: Colors.white,
           onPressed: _openLicenseScreen,
         ),
@@ -1040,23 +1092,23 @@ class _InventarPageState extends State<InventarPage>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(children: [
+        title: Row(children: [
           Icon(Icons.lock_outline, color: Colors.orange),
           SizedBox(width: 8),
-          Text('Licență necesară'),
+          Text(tr('Licență necesară', 'License required')),
         ]),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Perioada de trial gratuită de 1 lună a expirat.',
+              Text(
+                tr('Perioada de trial gratuită de 1 lună a expirat.', 'The free 1-month trial has expired.'),
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Cumpără o licență pe voltacademy.app/inventarplus.html folosind codul de instalare de mai jos, apoi importă fișierul descărcat:',
+              Text(
+                tr('Cumpără o licență pe voltacademy.app/inventarplus.html folosind codul de instalare de mai jos, apoi importă fișierul descărcat:', 'Buy a license at voltacademy.app/inventarplus.html using the installation code below, then import the downloaded file:'),
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 8),
@@ -1077,12 +1129,12 @@ class _InventarPageState extends State<InventarPage>
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
-                      tooltip: 'Copiază codul',
+                      tooltip: tr('Copiază codul', 'Copy code'),
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: businessId));
                         if (ctx.mounted) {
                           ScaffoldMessenger.of(ctx).showSnackBar(
-                            const SnackBar(content: Text('Cod copiat.')),
+                            SnackBar(content: Text(tr('Cod copiat.', 'Code copied.'))),
                           );
                         }
                       },
@@ -1093,7 +1145,7 @@ class _InventarPageState extends State<InventarPage>
               const SizedBox(height: 12),
               FilledButton.icon(
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Selectează fișierul de licență'),
+                label: Text(tr('Selectează fișierul de licență', 'Select the license file')),
                 onPressed: () async {
                   final r = await LicenseService.pickLicenseFile();
                   if (!ctx.mounted) return;
@@ -1102,7 +1154,7 @@ class _InventarPageState extends State<InventarPage>
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     SnackBar(
                       content: Text(r.success
-                          ? 'Licență activată cu succes!'
+                          ? tr('Licență activată cu succes!', 'License activated successfully!')
                           : r.message),
                       backgroundColor: r.success ? Colors.green.shade700 : Colors.red.shade700,
                     ),
@@ -1117,9 +1169,11 @@ class _InventarPageState extends State<InventarPage>
               const SizedBox(height: 16),
               const Divider(),
               const SizedBox(height: 8),
-              const Text(
-                'Ai deja un fișier .invtoken vechi de la Volt Academy?\n'
+              Text(
+                tr('Ai deja un fișier .invtoken vechi de la Volt Academy?\n'
                 'Deschide-l din WhatsApp sau Files și alege "Inventar+".',
+                'Do you already have an old .invtoken file from Volt Academy?\n'
+                'Open it from WhatsApp or Files and choose "Inventar+".'),
                 style: TextStyle(fontSize: 11, color: Colors.grey),
               ),
             ],
@@ -1128,7 +1182,7 @@ class _InventarPageState extends State<InventarPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Închide'),
+            child: Text(tr('Închide', 'Close')),
           ),
         ],
       ),
@@ -1249,8 +1303,8 @@ class _InventarPageState extends State<InventarPage>
     if (status.isGranted) return true;
     if (!mounted) return false;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('Permisiunea pentru cameră este necesară pentru scanare.')),
+      SnackBar(
+          content: Text(tr('Permisiunea pentru cameră este necesară pentru scanare.', 'The camera permission is required for scanning.'))),
     );
     return false;
   }
@@ -1281,7 +1335,7 @@ class _InventarPageState extends State<InventarPage>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDs) => AlertDialog(
-          title: Text(isEdit ? 'Editează produsul' : 'Adaugă produs'),
+          title: Text(isEdit ? tr('Editează produsul', 'Edit product') : tr('Adaugă produs', 'Add product')),
           content: SizedBox(
             width: 400,
             child: SingleChildScrollView(
@@ -1291,25 +1345,25 @@ class _InventarPageState extends State<InventarPage>
                 children: [
                   TextField(
                     controller: nameCtrl,
-                    decoration: const InputDecoration(
-                        labelText: 'Denumire produs *', border: OutlineInputBorder()),
+                    decoration: InputDecoration(
+                        labelText: tr('Denumire produs *', 'Product name *'), border: OutlineInputBorder()),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: descCtrl,
-                    decoration: const InputDecoration(
-                        labelText: 'Descriere', border: OutlineInputBorder()),
+                    decoration: InputDecoration(
+                        labelText: tr('Descriere', 'Description'), border: OutlineInputBorder()),
                     maxLines: 3,
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: barcodeCtrl,
                     decoration: InputDecoration(
-                      labelText: 'Cod de bare',
+                      labelText: tr('Cod de bare', 'Barcode'),
                       border: const OutlineInputBorder(),
                       suffixIcon: IconButton(
                         icon: const Icon(Icons.qr_code_scanner),
-                        tooltip: 'Scanează',
+                        tooltip: tr('Scanează', 'Scan'),
                         onPressed: () async {
                           final code = await _scanBarcode();
                           if (code != null) setDs(() => barcodeCtrl.text = code);
@@ -1319,7 +1373,7 @@ class _InventarPageState extends State<InventarPage>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Fără cod de bare, produsul nu poate fi actualizat prin butoanele +/- (scanare).',
+                    tr('Fără cod de bare, produsul nu poate fi actualizat prin butoanele +/- (scanare).', 'Without a barcode, the product cannot be updated with the +/- buttons (scanning).'),
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                   ),
                   const SizedBox(height: 12),
@@ -1329,8 +1383,8 @@ class _InventarPageState extends State<InventarPage>
                         child: TextField(
                           controller: minCtrl,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                              labelText: 'Stoc minim *', border: OutlineInputBorder()),
+                          decoration: InputDecoration(
+                              labelText: tr('Stoc minim *', 'Minimum stock *'), border: OutlineInputBorder()),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1338,8 +1392,8 @@ class _InventarPageState extends State<InventarPage>
                         child: TextField(
                           controller: alertCtrl,
                           keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                              labelText: 'Prag alertă', border: OutlineInputBorder()),
+                          decoration: InputDecoration(
+                              labelText: tr('Prag alertă', 'Alert threshold'), border: OutlineInputBorder()),
                         ),
                       ),
                     ],
@@ -1347,7 +1401,7 @@ class _InventarPageState extends State<InventarPage>
                   if (isEdit) ...[
                     const SizedBox(height: 12),
                     Text(
-                      'Stoc actual: ${existing.stocActual}  (se modifică din butoanele +/- de pe ecranul principal)',
+                      tr('Stoc actual: ${existing.stocActual}  (se modifică din butoanele +/- de pe ecranul principal)', 'Current stock: ${existing.stocActual}  (change it with the +/- buttons on the main screen)'),
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                     ),
                   ],
@@ -1358,7 +1412,7 @@ class _InventarPageState extends State<InventarPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Anulează'),
+              child: Text(tr('Anulează', 'Cancel')),
             ),
             FilledButton(
               onPressed: () {
@@ -1374,8 +1428,8 @@ class _InventarPageState extends State<InventarPage>
                       e.codBare == code && (!isEdit || e.number != existing.number));
                   if (dup) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Acest cod de bare este deja folosit de alt produs.')),
+                      SnackBar(
+                          content: Text(tr('Acest cod de bare este deja folosit de alt produs.', 'This barcode is already used by another product.'))),
                     );
                     return;
                   }
@@ -1392,7 +1446,7 @@ class _InventarPageState extends State<InventarPage>
                   pragAlerta: alert,
                 );
               },
-              child: Text(isEdit ? 'Salvează' : 'Adaugă'),
+              child: Text(isEdit ? tr('Salvează', 'Save') : tr('Adaugă', 'Add')),
             ),
           ],
         ),
@@ -1449,7 +1503,7 @@ class _InventarPageState extends State<InventarPage>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDs) => AlertDialog(
-          title: const Text('Telefoane alertă & SMS'),
+          title: Text(tr('Telefoane alertă & SMS', 'Alert phones & SMS')),
           content: SizedBox(
             width: 400,
             child: SingleChildScrollView(
@@ -1463,20 +1517,22 @@ class _InventarPageState extends State<InventarPage>
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      'Stoc actual: ${item.stocActual}  ·  Minim: ${item.stocMinim}  ·  Prag alertă: ${item.pragAlerta}',
+                      tr('Stoc actual: ${item.stocActual}  ·  Minim: ${item.stocMinim}  ·  Prag alertă: ${item.pragAlerta}', 'Current stock: ${item.stocActual}  ·  Minimum: ${item.stocMinim}  ·  Alert threshold: ${item.pragAlerta}'),
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  _phoneField(phone1Ctrl, 'Telefon 1 (opțional)', setDs),
+                  _phoneField(phone1Ctrl, tr('Telefon 1 (opțional)', 'Phone 1 (optional)'), setDs),
                   const SizedBox(height: 10),
-                  _phoneField(phone2Ctrl, 'Telefon 2 (opțional)', setDs),
+                  _phoneField(phone2Ctrl, tr('Telefon 2 (opțional)', 'Phone 2 (optional)'), setDs),
                   const SizedBox(height: 10),
-                  _phoneField(phone3Ctrl, 'Telefon 3 (opțional)', setDs),
+                  _phoneField(phone3Ctrl, tr('Telefon 3 (opțional)', 'Phone 3 (optional)'), setDs),
                   const SizedBox(height: 6),
                   Text(
-                    'Notificare + SMS trimise automat, o singură dată, la atingerea '
+                    tr('Notificare + SMS trimise automat, o singură dată, la atingerea '
                     'pragului de alertă (galben) sau a stocului minim (roșu).',
+                    'A notification + SMS are sent automatically, once, when stock reaches '
+                    'the alert threshold (yellow) or the minimum stock (red).'),
                     style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
                   ),
                 ],
@@ -1486,7 +1542,7 @@ class _InventarPageState extends State<InventarPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Anulează'),
+              child: Text(tr('Anulează', 'Cancel')),
             ),
             FilledButton(
               onPressed: () {
@@ -1505,7 +1561,7 @@ class _InventarPageState extends State<InventarPage>
                 }
                 Navigator.pop(ctx, true);
               },
-              child: const Text('Salvează'),
+              child: Text(tr('Salvează', 'Save')),
             ),
           ],
         ),
@@ -1525,17 +1581,17 @@ class _InventarPageState extends State<InventarPage>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Șterge produs'),
-        content: Text('Ești sigur că vrei să ștergi "${item.denumire}"?'),
+        title: Text(tr('Șterge produs', 'Delete product')),
+        content: Text(tr('Ești sigur că vrei să ștergi "${item.denumire}"?', 'Are you sure you want to delete "${item.denumire}"?')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Anulează'),
+            child: Text(tr('Anulează', 'Cancel')),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Șterge'),
+            child: Text(tr('Șterge', 'Delete')),
           ),
         ],
       ),
@@ -1569,22 +1625,22 @@ class _InventarPageState extends State<InventarPage>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Stoc actual: $currentStock',
+            Text(tr('Stoc actual: $currentStock', 'Current stock: $currentStock'),
                 style: TextStyle(color: Colors.grey.shade600)),
             const SizedBox(height: 12),
             TextField(
               controller: ctrl,
               keyboardType: TextInputType.number,
               autofocus: true,
-              decoration: const InputDecoration(
-                  labelText: 'Cantitate', border: OutlineInputBorder()),
+              decoration: InputDecoration(
+                  labelText: tr('Cantitate', 'Quantity'), border: OutlineInputBorder()),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Anulează'),
+            child: Text(tr('Anulează', 'Cancel')),
           ),
           FilledButton(
             onPressed: () {
@@ -1592,7 +1648,7 @@ class _InventarPageState extends State<InventarPage>
               if (q == null || q <= 0) return;
               Navigator.pop(ctx, q);
             },
-            child: const Text('Confirmă'),
+            child: Text(tr('Confirmă', 'Confirm')),
           ),
         ],
       ),
@@ -1608,17 +1664,17 @@ class _InventarPageState extends State<InventarPage>
       final addNow = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Produs necunoscut'),
+          title: Text(tr('Produs necunoscut', 'Unknown product')),
           content: Text(
-              'Niciun produs nu are codul de bare "$code". Adaugi un produs nou cu acest cod?'),
+              tr('Niciun produs nu are codul de bare "$code". Adaugi un produs nou cu acest cod?', 'No product has the barcode "$code". Add a new product with this code?')),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Anulează'),
+              child: Text(tr('Anulează', 'Cancel')),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Adaugă produs'),
+              child: Text(tr('Adaugă produs', 'Add product')),
             ),
           ],
         ),
@@ -1629,7 +1685,7 @@ class _InventarPageState extends State<InventarPage>
 
     final product = _items[idx];
     final qty = await _askQuantity(
-      title: '${increase ? "Adaugă" : "Scoate"} stoc — ${product.denumire}',
+      title: tr('${increase ? "Adaugă" : "Scoate"} stoc — ${product.denumire}', '${increase ? "Add" : "Remove"} stock — ${product.denumire}'),
       currentStock: product.stocActual,
     );
     if (qty == null) return;
@@ -1660,7 +1716,7 @@ class _InventarPageState extends State<InventarPage>
                 size: 22,
               ),
               const SizedBox(width: 8),
-              const Text('Sincronizare dispozitiv'),
+              Text(tr('Sincronizare dispozitiv', 'Device sync')),
             ],
           ),
           content: SizedBox(
@@ -1685,7 +1741,7 @@ class _InventarPageState extends State<InventarPage>
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Sincronizare activă cu:\n${SyncService.partnerPhone}',
+                              tr('Sincronizare activă cu:\n${SyncService.partnerPhone}', 'Sync active with:\n${SyncService.partnerPhone}'),
                               style: TextStyle(
                                   color: Colors.green.shade800,
                                   fontSize: 13),
@@ -1696,7 +1752,7 @@ class _InventarPageState extends State<InventarPage>
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      'Modificările se trimit automat prin SMS la fiecare schimbare.',
+                      tr('Modificările se trimit automat prin SMS la fiecare schimbare.', 'Changes are sent automatically by SMS every time something changes.'),
                       style: TextStyle(
                           fontSize: 12, color: Colors.grey.shade600),
                     ),
@@ -1704,8 +1760,8 @@ class _InventarPageState extends State<InventarPage>
                     TextField(
                       controller: phoneCtrl,
                       keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Număr telefon partener *',
+                      decoration: InputDecoration(
+                        labelText: tr('Număr telefon partener *', 'Partner phone number *'),
                         hintText: '+40712345678',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.phone_outlined),
@@ -1720,11 +1776,16 @@ class _InventarPageState extends State<InventarPage>
                         border: Border.all(color: Colors.blue.shade100),
                       ),
                       child: Text(
-                        'La prima sincronizare, toate produsele de pe acest '
+                        tr('La prima sincronizare, toate produsele de pe acest '
                         'dispozitiv vor fi trimise prin SMS. Ulterior, fiecare '
                         'modificare va fi sincronizată automat.\n\n'
                         'Configurează sincronizarea și pe celălalt dispozitiv '
                         'pentru a primi și de acolo.',
+                        'On the first sync, all products on this '
+                        'device are sent by SMS. After that, every '
+                        'change is synced automatically.\n\n'
+                        'Set up sync on the other device as well '
+                        'to receive its changes too.'),
                         style: TextStyle(
                             fontSize: 11, color: Colors.blue.shade700),
                       ),
@@ -1738,7 +1799,7 @@ class _InventarPageState extends State<InventarPage>
             if (SyncService.isActive)
               TextButton.icon(
                 icon: const Icon(Icons.sync_disabled, color: Colors.red, size: 18),
-                label: const Text('Desincronizează',
+                label: Text(tr('Desincronizează', 'Stop syncing'),
                     style: TextStyle(color: Colors.red)),
                 onPressed: () async {
                   await SyncService.clearPartner();
@@ -1749,12 +1810,12 @@ class _InventarPageState extends State<InventarPage>
               ),
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Închide'),
+              child: Text(tr('Închide', 'Close')),
             ),
             if (!SyncService.isActive)
               FilledButton.icon(
                 icon: const Icon(Icons.sync, size: 18),
-                label: const Text('Sincronizează'),
+                label: Text(tr('Sincronizează', 'Sync')),
                 onPressed: () async {
                   final phone = phoneCtrl.text.trim();
                   if (phone.isEmpty) return;
@@ -1777,7 +1838,7 @@ class _InventarPageState extends State<InventarPage>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-            'Trimitere sincronizare inițială (${_items.length} produse)...'),
+            tr('Trimitere sincronizare inițială (${_items.length} produse)...', 'Sending initial sync (${_items.length} ${_items.length == 1 ? 'product' : 'products'})...')),
         duration: Duration(seconds: _items.length * 2 + 3),
       ),
     );
@@ -1786,8 +1847,8 @@ class _InventarPageState extends State<InventarPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Sincronizare inițială trimisă!'),
+      SnackBar(
+        content: Text(tr('Sincronizare inițială trimisă!', 'Initial sync sent!')),
         duration: Duration(seconds: 3),
       ),
     );
@@ -1806,29 +1867,29 @@ class _InventarPageState extends State<InventarPage>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _detailRow('Nr.', item.number.toString()),
+              _detailRow(tr('Nr.', 'No.'), item.number.toString()),
               const SizedBox(height: 10),
-              _detailRow('Descriere',
+              _detailRow(tr('Descriere', 'Description'),
                   item.descriere.isEmpty ? '—' : item.descriere),
               const SizedBox(height: 10),
-              _detailRow('Cod de bare',
+              _detailRow(tr('Cod de bare', 'Barcode'),
                   item.codBare.isEmpty ? '—' : item.codBare),
               const SizedBox(height: 10),
-              _detailRow('Stoc actual', item.stocActual.toString(),
+              _detailRow(tr('Stoc actual', 'Current stock'), item.stocActual.toString(),
                   valueColor: lvl == 2
                       ? Colors.red.shade700
                       : lvl == 1
                           ? Colors.orange.shade700
                           : null),
               const SizedBox(height: 10),
-              _detailRow('Stoc minim', item.stocMinim.toString()),
+              _detailRow(tr('Stoc minim', 'Minimum stock'), item.stocMinim.toString()),
               const SizedBox(height: 10),
-              _detailRow('Prag alertă', item.pragAlerta.toString()),
+              _detailRow(tr('Prag alertă', 'Alert threshold'), item.pragAlerta.toString()),
               const SizedBox(height: 10),
-              _detailRow('Creat la', _formatDateTime(item.createdAt)),
+              _detailRow(tr('Creat la', 'Created'), _formatDateTime(item.createdAt)),
               if (item.phones.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                _detailRow('SMS la', item.phones.join('\n'),
+                _detailRow(tr('SMS la', 'SMS to'), item.phones.join('\n'),
                     valueColor: Colors.blue.shade700),
               ],
             ],
@@ -1840,11 +1901,11 @@ class _InventarPageState extends State<InventarPage>
               Navigator.pop(ctx);
               _showItemDialog(existing: item);
             },
-            child: const Text('Editează'),
+            child: Text(tr('Editează', 'Edit')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Închide'),
+            child: Text(tr('Închide', 'Close')),
           ),
         ],
       ),
@@ -1936,12 +1997,12 @@ class _InventarPageState extends State<InventarPage>
                         : Colors.white54,
               ),
               tooltip: LicenseService.isExpiringSoon
-                  ? 'Licența expiră în ${LicenseService.newLicenseDaysUntilExpiry} zile'
+                  ? tr('Licența expiră în ${LicenseService.newLicenseDaysUntilExpiry} zile', 'The license expires in ${LicenseService.newLicenseDaysUntilExpiry} days')
                   : LicenseService.isLicensed
-                  ? 'Licență activă'
+                  ? tr('Licență activă', 'License active')
                   : LicenseService.isTrialActive
-                      ? 'Trial activ · ${LicenseService.trialDaysLeft} zile rămase'
-                      : 'Trial expirat · activează licența',
+                      ? tr('Trial activ · ${LicenseService.trialDaysLeft} zile rămase', 'Trial active · ${LicenseService.trialDaysLeft} days left')
+                      : tr('Trial expirat · activează licența', 'Trial expired · activate the license'),
               onPressed: _openLicenseScreen,
             ),
           if (SyncService.isSupported)
@@ -1953,8 +2014,8 @@ class _InventarPageState extends State<InventarPage>
                     : Colors.white54,
               ),
               tooltip: SyncService.isActive
-                  ? 'Sincronizare activă · ${SyncService.partnerPhone}'
-                  : 'Configurează sincronizare',
+                  ? tr('Sincronizare activă · ${SyncService.partnerPhone}', 'Sync active · ${SyncService.partnerPhone}')
+                  : tr('Configurează sincronizare', 'Set up sync'),
               onPressed: _showSyncDialog,
             ),
           // Buton backup & restaurare — vizibil doar pe Android
@@ -1962,7 +2023,7 @@ class _InventarPageState extends State<InventarPage>
             IconButton(
               icon: const Icon(Icons.settings_backup_restore,
                   color: Colors.white70),
-              tooltip: 'Backup & restaurare',
+              tooltip: tr('Backup & restaurare', 'Backup & restore'),
               onPressed: _openBackupScreen,
             ),
           IconButton(
@@ -1970,7 +2031,7 @@ class _InventarPageState extends State<InventarPage>
               _searchVisible ? Icons.search_off : Icons.search,
               color: Colors.white,
             ),
-            tooltip: _searchVisible ? 'Ascunde căutare' : 'Caută',
+            tooltip: _searchVisible ? tr('Ascunde căutare', 'Hide search') : tr('Caută', 'Search'),
             onPressed: () {
               setState(() {
                 _searchVisible = !_searchVisible;
@@ -1980,6 +2041,11 @@ class _InventarPageState extends State<InventarPage>
                 }
               });
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.language, color: Colors.white70),
+            tooltip: tr('Limba aplicației', 'App language'),
+            onPressed: _showLanguageDialog,
           ),
           const SizedBox(width: 4),
         ],
@@ -2002,15 +2068,15 @@ class _InventarPageState extends State<InventarPage>
                         child: ListTile(
                           leading: Icon(Icons.sms_failed_outlined,
                               color: Colors.red.shade700),
-                          title: Text('SMS-urile sunt blocate',
+                          title: Text(tr('SMS-urile sunt blocate', 'SMS is blocked'),
                               style: TextStyle(
                                   color: Colors.red.shade800,
                                   fontWeight: FontWeight.w600)),
-                          subtitle: const Text(
-                              'Alertele de stoc și sincronizarea nu funcționează.'),
+                          subtitle: Text(
+                              tr('Alertele de stoc și sincronizarea nu funcționează.', 'Stock alerts and sync are not working.')),
                           trailing: TextButton(
                             onPressed: _showSmsBlockedDialog,
-                            child: const Text('Rezolvă'),
+                            child: Text(tr('Rezolvă', 'Fix')),
                           ),
                           onTap: _showSmsBlockedDialog,
                         ),
@@ -2028,14 +2094,17 @@ class _InventarPageState extends State<InventarPage>
                         child: ListTile(
                           leading: Icon(Icons.sms_failed_outlined,
                               color: Colors.orange.shade900),
-                          title: Text('Un SMS nu a putut fi trimis',
+                          title: Text(tr('Un SMS nu a putut fi trimis', 'An SMS could not be sent'),
                               style: TextStyle(
                                   color: Colors.orange.shade900,
                                   fontWeight: FontWeight.w600)),
                           subtitle: Text(
-                              'Către ${_smsFailure!.phone} · '
+                              tr('Către ${_smsFailure!.phone} · '
                               '${SmsService.fmt(_smsFailure!.failedAt)}\n'
-                              '${_smsFailure!.reason}'),
+                              '${_smsFailure!.reason}',
+                              'To ${_smsFailure!.phone} · '
+                              '${SmsService.fmt(_smsFailure!.failedAt)}\n'
+                              '${_smsFailure!.reason}')),
                           isThreeLine: true,
                           trailing: TextButton(
                             onPressed: _dismissSmsFailure,
@@ -2054,7 +2123,7 @@ class _InventarPageState extends State<InventarPage>
                               controller: _searchController,
                               autofocus: true,
                               decoration: InputDecoration(
-                                hintText: 'Caută în tabel...',
+                                hintText: tr('Caută în tabel...', 'Search the table...'),
                                 prefixIcon: const Icon(Icons.search),
                                 suffixIcon: _searchQuery.isNotEmpty
                                     ? IconButton(
@@ -2113,11 +2182,11 @@ class _InventarPageState extends State<InventarPage>
                                       color: const Color(0xFF08151F),
                                       child: Row(
                                         children: [
-                                          _buildHeaderCell('Nr.',         SortColumn.number,      width: 60),
-                                          _buildHeaderCell('Denumire',    SortColumn.name,        width: 190),
-                                          _buildHeaderCell('Descriere',   SortColumn.description, width: 190),
-                                          _buildHeaderCell('Stoc actual', SortColumn.stock,        width: 110),
-                                          _buildHeaderCell('Stoc minim',  SortColumn.stockMin,     width: 130),
+                                          _buildHeaderCell(tr('Nr.', 'No.'),         SortColumn.number,      width: 60),
+                                          _buildHeaderCell(tr('Denumire', 'Name'),    SortColumn.name,        width: 190),
+                                          _buildHeaderCell(tr('Descriere', 'Description'),   SortColumn.description, width: 190),
+                                          _buildHeaderCell(tr('Stoc actual', 'Current stock'), SortColumn.stock,        width: 110),
+                                          _buildHeaderCell(tr('Stoc minim', 'Minimum stock'),  SortColumn.stockMin,     width: 130),
                                           const SizedBox(width: 148),
                                         ],
                                       ),
@@ -2127,8 +2196,8 @@ class _InventarPageState extends State<InventarPage>
                                           ? Center(
                                               child: Text(
                                                 _searchQuery.isEmpty
-                                                    ? 'Nu există produse.'
-                                                    : 'Niciun rezultat pentru "$_searchQuery".',
+                                                    ? tr('Nu există produse.', 'There are no products.')
+                                                    : tr('Niciun rezultat pentru "$_searchQuery".', 'No results for "$_searchQuery".'),
                                                 style: TextStyle(
                                                     color: Colors.grey.shade600),
                                               ),
@@ -2159,13 +2228,13 @@ class _InventarPageState extends State<InventarPage>
                                                             children: [
                                                               _actionBtn(
                                                                 icon: Icons.edit_outlined,
-                                                                tooltip: 'Editează',
+                                                                tooltip: tr('Editează', 'Edit'),
                                                                 onPressed: () =>
                                                                     _showItemDialog(existing: item),
                                                               ),
                                                               _actionBtn(
                                                                 icon: Icons.phone_outlined,
-                                                                tooltip: 'Telefoane alertă & SMS',
+                                                                tooltip: tr('Telefoane alertă & SMS', 'Alert phones & SMS'),
                                                                 color: item.phones.isNotEmpty
                                                                     ? Colors.blue.shade600
                                                                     : null,
@@ -2174,7 +2243,7 @@ class _InventarPageState extends State<InventarPage>
                                                               ),
                                                               _actionBtn(
                                                                 icon: Icons.delete_outlined,
-                                                                tooltip: 'Șterge',
+                                                                tooltip: tr('Șterge', 'Delete'),
                                                                 color: Colors.red.shade400,
                                                                 onPressed: () =>
                                                                     _confirmDelete(item),
@@ -2212,8 +2281,8 @@ class _InventarPageState extends State<InventarPage>
                                       children: [
                                         Text(
                                           rows.length == _items.length
-                                              ? '${_items.length} produse'
-                                              : '${rows.length} din ${_items.length} produse',
+                                              ? tr('${_items.length} produse', '${_items.length} ${_items.length == 1 ? 'product' : 'products'}')
+                                              : tr('${rows.length} din ${_items.length} produse', '${rows.length} of ${_items.length} ${_items.length == 1 ? 'product' : 'products'}'),
                                           style: TextStyle(
                                               color: Colors.grey.shade600,
                                               fontSize: 12),
@@ -2232,8 +2301,8 @@ class _InventarPageState extends State<InventarPage>
                                           const SizedBox(width: 3),
                                           Text(
                                             LicenseService.isTrialActive
-                                                ? 'Trial · ${LicenseService.trialDaysLeft} zile'
-                                                : 'Trial expirat',
+                                                ? tr('Trial · ${LicenseService.trialDaysLeft} zile', 'Trial · ${LicenseService.trialDaysLeft} days')
+                                                : tr('Trial expirat', 'Trial expired'),
                                             style: TextStyle(
                                                 color: LicenseService.isTrialActive
                                                     ? Colors.orange.shade700
@@ -2248,7 +2317,7 @@ class _InventarPageState extends State<InventarPage>
                                               color: Colors.green.shade600),
                                           const SizedBox(width: 3),
                                           Text(
-                                            'Sincronizat',
+                                            tr('Sincronizat', 'Synced'),
                                             style: TextStyle(
                                                 color: Colors.green.shade600,
                                                 fontSize: 11),
@@ -2303,7 +2372,7 @@ class _InventarPageState extends State<InventarPage>
             children: [
               _bottomBtn(
                 icon: Icons.add_circle_rounded,
-                label: 'Adaugă',
+                label: tr('Adaugă', 'Add'),
                 onTap: () => _showItemDialog(),
                 primary: true,
               ),
@@ -2314,13 +2383,13 @@ class _InventarPageState extends State<InventarPage>
               const SizedBox(width: 8),
               _bottomBtn(
                 icon: Icons.bar_chart_rounded,
-                label: 'Raport',
+                label: tr('Raport', 'Report'),
                 onTap: _showReportDialog,
               ),
               const SizedBox(width: 8),
               _bottomBtn(
                 icon: Icons.edit_note_rounded,
-                label: 'Mesaj SMS',
+                label: tr('Mesaj SMS', 'SMS message'),
                 onTap: _showSmsTemplateDialog,
               ),
             ],
@@ -2403,14 +2472,14 @@ class _InventarPageState extends State<InventarPage>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDs) => AlertDialog(
-          title: const Text('Generează raport'),
+          title: Text(tr('Generează raport', 'Generate report')),
           content: SizedBox(
             width: 400,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Selectează ce produse să apară în raport:',
+                Text(tr('Selectează ce produse să apară în raport:', 'Select which products to include in the report:'),
                     style: TextStyle(fontSize: 13, color: Colors.grey)),
                 const SizedBox(height: 12),
                 RadioGroup<_ReportFilter>(
@@ -2422,19 +2491,19 @@ class _InventarPageState extends State<InventarPage>
                       RadioListTile<_ReportFilter>(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: const Text('Toate produsele'),
+                        title: Text(tr('Toate produsele', 'All products')),
                         value: _ReportFilter.toate,
                       ),
                       RadioListTile<_ReportFilter>(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: const Text('Sub prag alertă (galben + roșu)'),
+                        title: Text(tr('Sub prag alertă (galben + roșu)', 'Below alert threshold (yellow + red)')),
                         value: _ReportFilter.subPrag,
                       ),
                       RadioListTile<_ReportFilter>(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: const Text('Sub stoc minim (roșu)'),
+                        title: Text(tr('Sub stoc minim (roșu)', 'Below minimum stock (red)')),
                         value: _ReportFilter.subMinim,
                       ),
                     ],
@@ -2446,14 +2515,14 @@ class _InventarPageState extends State<InventarPage>
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Anulează'),
+              child: Text(tr('Anulează', 'Cancel')),
             ),
             FilledButton(
               onPressed: () {
                 Navigator.pop(ctx);
                 _showReportResult(filter);
               },
-              child: const Text('Generează'),
+              child: Text(tr('Generează', 'Generate')),
             ),
           ],
         ),
@@ -2482,35 +2551,35 @@ class _InventarPageState extends State<InventarPage>
 
     String statusLabel(Product p) {
       final lvl = alertLevelFor(p);
-      return lvl == 2 ? 'CRITIC' : lvl == 1 ? 'ATENȚIE' : 'NORMAL';
+      return lvl == 2 ? tr('CRITIC', 'CRITICAL') : lvl == 1 ? tr('ATENȚIE', 'WARNING') : 'NORMAL';
     }
 
     String buildExportText(
         List<ReportEntry> all, String period, int actCnt, int delCnt) {
       final buf = StringBuffer();
       buf.writeln('═══════════════════════════════════════');
-      buf.writeln('         RAPORT INVENTAR+');
+      buf.writeln(tr('         RAPORT INVENTAR+', '         INVENTAR+ REPORT'));
       buf.writeln('═══════════════════════════════════════');
-      buf.writeln('Filtru   : $period');
-      buf.writeln('Total    : ${all.length} produse');
+      buf.writeln(tr('Filtru   : $period', 'Filter   : $period'));
+      buf.writeln(tr('Total    : ${all.length} produse', 'Total    : ${all.length} ${all.length == 1 ? 'product' : 'products'}'));
       buf.writeln('  Active : $actCnt');
-      buf.writeln('  Șterse : $delCnt');
+      buf.writeln(tr('  Șterse : $delCnt', '  Deleted: $delCnt'));
       buf.writeln('───────────────────────────────────────');
       for (final e in all) {
         buf.writeln('');
-        final del = e.deletedAt != null ? ' [ȘTERS]' : '';
+        final del = e.deletedAt != null ? tr(' [ȘTERS]', ' [DELETED]') : '';
         buf.writeln('• ${e.item.denumire}$del  [${statusLabel(e.item)}]');
-        buf.writeln('  Stoc    : ${e.item.stocActual} (minim ${e.item.stocMinim}, prag ${e.item.pragAlerta})');
+        buf.writeln(tr('  Stoc    : ${e.item.stocActual} (minim ${e.item.stocMinim}, prag ${e.item.pragAlerta})', '  Stock   : ${e.item.stocActual} (minimum ${e.item.stocMinim}, threshold ${e.item.pragAlerta})'));
         if (e.deletedAt != null) {
-          buf.writeln('  Șters la: ${_formatDateTime(e.deletedAt!)}');
+          buf.writeln(tr('  Șters la: ${_formatDateTime(e.deletedAt!)}', '  Deleted : ${_formatDateTime(e.deletedAt!)}'));
         }
         if (e.item.descriere.isNotEmpty) {
-          buf.writeln('  Descriere: ${e.item.descriere}');
+          buf.writeln(tr('  Descriere: ${e.item.descriere}', '  Description: ${e.item.descriere}'));
         }
       }
       buf.writeln('');
       buf.writeln('═══════════════════════════════════════');
-      buf.writeln('Generat la: ${_formatDateTime(DateTime.now())}');
+      buf.writeln(tr('Generat la: ${_formatDateTime(DateTime.now())}', 'Generated: ${_formatDateTime(DateTime.now())}'));
       return buf.toString();
     }
 
@@ -2521,22 +2590,22 @@ class _InventarPageState extends State<InventarPage>
       });
 
     final period = switch (filter) {
-      _ReportFilter.toate    => 'Toate produsele',
-      _ReportFilter.subPrag  => 'Sub prag alertă',
-      _ReportFilter.subMinim => 'Sub stoc minim',
+      _ReportFilter.toate    => tr('Toate produsele', 'All products'),
+      _ReportFilter.subPrag  => tr('Sub prag alertă', 'Below alert threshold'),
+      _ReportFilter.subMinim => tr('Sub stoc minim', 'Below minimum stock'),
     };
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Raport stocuri'),
+        title: Text(tr('Raport stocuri', 'Stock report')),
         content: SizedBox(
           width: 480,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Filtru: $period',
+              Text(tr('Filtru: $period', 'Filter: $period'),
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 2),
               RichText(
@@ -2553,7 +2622,7 @@ class _InventarPageState extends State<InventarPage>
                     const TextSpan(text: '  +  '),
                     TextSpan(
                         text:
-                            '${deletedItems.length} șterse din buffer)',
+                            tr('${deletedItems.length} șterse din buffer)', '${deletedItems.length} deleted, from the buffer)'),
                         style:
                             TextStyle(color: Colors.red.shade700)),
                   ],
@@ -2561,7 +2630,7 @@ class _InventarPageState extends State<InventarPage>
               ),
               const SizedBox(height: 12),
               if (all.isEmpty)
-                const Text('Nu există produse pentru acest filtru.')
+                Text(tr('Nu există produse pentru acest filtru.', 'There are no products for this filter.'))
               else
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 400),
@@ -2627,7 +2696,7 @@ class _InventarPageState extends State<InventarPage>
                                                 BorderRadius.circular(4),
                                           ),
                                           child: Text(
-                                            'ȘTERS',
+                                            tr('ȘTERS', 'DELETED'),
                                             style: TextStyle(
                                                 fontSize: 10,
                                                 color: Colors.grey.shade600,
@@ -2638,7 +2707,7 @@ class _InventarPageState extends State<InventarPage>
                                     ],
                                   ),
                                   Text(
-                                    'Stoc: ${item.stocActual}  (minim ${item.stocMinim}, prag ${item.pragAlerta})',
+                                    tr('Stoc: ${item.stocActual}  (minim ${item.stocMinim}, prag ${item.pragAlerta})', 'Stock: ${item.stocActual}  (minimum ${item.stocMinim}, threshold ${item.pragAlerta})'),
                                     style: TextStyle(
                                         fontSize: 12,
                                         color: isDeleted
@@ -2651,7 +2720,7 @@ class _InventarPageState extends State<InventarPage>
                                   ),
                                   if (isDeleted)
                                     Text(
-                                      'Șters la: ${_formatDateTime(entry.deletedAt!)}',
+                                      tr('Șters la: ${_formatDateTime(entry.deletedAt!)}', 'Deleted: ${_formatDateTime(entry.deletedAt!)}'),
                                       style: TextStyle(
                                           fontSize: 11,
                                           color: Colors.grey.shade500),
@@ -2675,16 +2744,50 @@ class _InventarPageState extends State<InventarPage>
             onPressed: () {
               final text = buildExportText(
                   all, period, activeItems.length, deletedItems.length);
-              SharePlus.instance.share(ShareParams(text: text, subject: 'Raport Inventar+'));
+              SharePlus.instance.share(ShareParams(text: text, subject: tr('Raport Inventar+', 'Inventar+ report')));
             },
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Închide'),
+            child: Text(tr('Închide', 'Close')),
           ),
         ],
       ),
     );
+  }
+
+  // ── Dialog limba aplicației ──────────────────────────────────────────────────
+  // Limba aleasă se aplică interfeței, notificărilor și SMS-urilor de alertă
+  // trimise de pe acest telefon.
+  Future<void> _showLanguageDialog() async {
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(tr('Limba aplicației', 'App language')),
+        children: [
+          for (final (code, name) in const [('ro', 'Română'), ('en', 'English')])
+            ListTile(
+              leading: Icon(
+                AppLang.code.value == code
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+              ),
+              title: Text(name),
+              onTap: () => Navigator.pop(ctx, code),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+            child: Text(
+              tr('Alertele SMS se trimit în limba aleasă aici.',
+                  'SMS alerts are sent in the language chosen here.'),
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (chosen == null || chosen == AppLang.code.value) return;
+    await AppLang.set(chosen);
   }
 
   // ── Dialog editare template SMS ───────────────────────────────────────────────
@@ -2694,7 +2797,7 @@ class _InventarPageState extends State<InventarPage>
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Editează mesaj SMS'),
+        title: Text(tr('Editează mesaj SMS', 'Edit SMS message')),
         content: SizedBox(
           width: 400,
           child: SingleChildScrollView(
@@ -2702,33 +2805,33 @@ class _InventarPageState extends State<InventarPage>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Variabile disponibile:',
+                Text(
+                  tr('Variabile disponibile:', 'Available variables:'),
                   style: TextStyle(
                       fontWeight: FontWeight.w600, fontSize: 13),
                 ),
                 const SizedBox(height: 4),
-                _templateChip('[DENUMIRE]',    'Denumirea produsului'),
-                _templateChip('[STOC]',        'Stocul actual'),
-                _templateChip('[STOC_MINIM]',  'Stocul minim setat'),
-                _templateChip('[PRAG_ALERTA]', 'Pragul de alertă setat'),
+                _templateChip(tr('[DENUMIRE]', '[NAME]'), tr('Denumirea produsului', 'Product name')),
+                _templateChip(tr('[STOC]', '[STOCK]'), tr('Stocul actual', 'Current stock')),
+                _templateChip(tr('[STOC_MINIM]', '[MIN_STOCK]'), tr('Stocul minim setat', 'Minimum stock')),
+                _templateChip(tr('[PRAG_ALERTA]', '[THRESHOLD]'), tr('Pragul de alertă setat', 'Alert threshold')),
                 const SizedBox(height: 12),
                 TextField(
                   controller: ctrl,
                   maxLines: 5,
-                  decoration: const InputDecoration(
-                    labelText: 'Template mesaj',
+                  decoration: InputDecoration(
+                    labelText: tr('Template mesaj', 'Message template'),
                     border: OutlineInputBorder(),
                     helperText:
-                        'La trimitere, variabilele sunt înlocuite automat.',
+                        tr('La trimitere, variabilele sunt înlocuite automat.', 'When the message is sent, the variables are replaced automatically.'),
                     helperMaxLines: 2,
                   ),
                 ),
                 const SizedBox(height: 8),
                 TextButton.icon(
                   icon: const Icon(Icons.restart_alt, size: 16),
-                  label: const Text('Resetează la implicit'),
-                  onPressed: () => ctrl.text = _kDefaultSmsTemplate,
+                  label: Text(tr('Resetează la implicit', 'Reset to default')),
+                  onPressed: () => ctrl.text = _defaultSmsTemplate,
                 ),
               ],
             ),
@@ -2737,7 +2840,7 @@ class _InventarPageState extends State<InventarPage>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Anulează'),
+            child: Text(tr('Anulează', 'Cancel')),
           ),
           FilledButton(
             onPressed: () async {
@@ -2749,7 +2852,7 @@ class _InventarPageState extends State<InventarPage>
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
             },
-            child: const Text('Salvează'),
+            child: Text(tr('Salvează', 'Save')),
           ),
         ],
       ),
@@ -2792,8 +2895,10 @@ class _InventarPageState extends State<InventarPage>
                     color: Color(0xFF3730A3))),
           ),
           const SizedBox(width: 8),
-          Text(desc,
-              style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          Expanded(
+            child: Text(desc,
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          ),
         ],
       ),
     );

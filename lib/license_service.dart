@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'l10n.dart';
+
 // ─── Serviciu licențiere ──────────────────────────────────────────────────────
 class LicenseService {
   static const _ch              = MethodChannel('inventarplus/license');
@@ -176,7 +178,7 @@ class LicenseService {
 
   static Future<({bool success, String message})> activate(String token) async {
     if (!_isAndroid) {
-      return (success: false, message: 'Nu este suportat pe această platformă.');
+      return (success: false, message: tr('Nu este suportat pe această platformă.', 'Not supported on this platform.'));
     }
     try {
       final r = await _ch.invokeMethod<Map<Object?, Object?>>('verifyAndActivate',

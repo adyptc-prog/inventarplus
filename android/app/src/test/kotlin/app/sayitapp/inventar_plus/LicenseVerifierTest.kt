@@ -49,14 +49,14 @@ class LicenseVerifierTest {
         val r = verifier.evaluate(license("lifetime"), ownId, now)
         assertTrue(r.isActive)
         assertTrue(r.isLifetime)
-        assertEquals("Lifetime license active.", r.message)
+        assertEquals("Licență pe viață activă.", r.message)
     }
 
     @Test
     fun `alt cod de instalare e respins`() {
         val r = verifier.evaluate(license("otherInstall"), ownId, now)
         assertEquals("invalid", r.status)
-        assertEquals("License belongs to another installation.", r.message)
+        assertEquals("Licența aparține altei instalări.", r.message)
     }
 
     @Test
@@ -70,26 +70,26 @@ class LicenseVerifierTest {
     fun `licenta expirata e respinsa`() {
         val later = LicenseVerifier.parseIso8601Utc("2030-01-01T00:00:00Z")!!
         val r = verifier.evaluate(license("timed"), ownId, later)
-        assertEquals("License has expired.", r.message)
+        assertEquals("Licența a expirat.", r.message)
     }
 
     @Test
     fun `ceas dat inapoi inainte de emitere e respins`() {
         val before = LicenseVerifier.parseIso8601Utc("2020-01-01T00:00:00Z")!!
         val r = verifier.evaluate(license("timed"), ownId, before)
-        assertEquals("Device clock is set before the license issue date.", r.message)
+        assertEquals("Ceasul telefonului e setat înaintea datei de emitere a licenței.", r.message)
     }
 
     @Test
     fun `data de expirare modificata invalideaza semnatura`() {
         val r = verifier.evaluate(tampered("timed", "validUntil", "2099-01-01T00:00:00Z"), ownId, now)
-        assertEquals("License signature is invalid.", r.message)
+        assertEquals("Semnătura licenței nu este validă.", r.message)
     }
 
     @Test
     fun `codul de instalare modificat invalideaza semnatura`() {
         val r = verifier.evaluate(tampered("otherInstall", "businessId", ownId), ownId, now)
-        assertEquals("License signature is invalid.", r.message)
+        assertEquals("Semnătura licenței nu este validă.", r.message)
     }
 
     @Test
