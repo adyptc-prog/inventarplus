@@ -1,4 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- The app works fully offline. The barcode scanner (Google ML Kit, via
+         mobile_scanner) would otherwise add INTERNET and upload usage
+         diagnostics to Google, so the permission is stripped from the merged
+         manifest. Debug builds add it back for the Flutter tooling. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.SEND_SMS"/>
@@ -60,6 +66,11 @@
             android:exported="false"
             android:name=".SmsSentReceiver"/>
 
+        <!-- Unregisters the ML Kit telemetry upload backend, so diagnostics are
+             dropped on the device instead of being queued for sending. -->
+        <service
+            android:name="com.google.android.datatransport.runtime.backends.TransportBackendDiscovery"
+            tools:node="remove" />
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
