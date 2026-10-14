@@ -23,10 +23,12 @@ no internet connection.
 
 - **Barcode scanning** with the phone camera to add and find products
 - **Stock alerts** when a product drops below its alert threshold or its minimum stock
-- **SMS notifications** to clients or suppliers, with an editable message template
+- **SMS notifications** to clients or suppliers, with an editable message template (the default
+  template follows the app language; a template you edited is kept as it is)
 - **Two-phone sync over SMS** with a partner phone
 - **Reports** for any period, including what was moved or deleted from stock
 - **Backup and restore**, daily and manual, to phone storage or a USB stick
+- **Romanian and English**, chosen from the globe icon in the app bar (on first launch: Romanian on a Romanian phone, English otherwise)
 - 30-day free trial, then an activation license (see [Free Trial & Activation License](#free-trial--activation-license))
 
 **Privacy note:** barcode and QR scanning uses Google ML Kit, which runs on the phone (camera images
